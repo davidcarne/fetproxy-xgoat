@@ -152,7 +152,7 @@ static gboolean fet_module_proc_outgoing( FetModule* fet )
 		frame = (fet_frame_t*)g_queue_peek_tail( fet->out_frames );
 		d = fet_module_outgoing_next( fet );
 
-		inc = TRUE; //fet_module_outgoing_escape_byte( fet, &d );
+		inc = fet_module_outgoing_escape_byte( fet, &d );
 
 		/* write data */
 		w = TEMP_FAILURE_RETRY(write( fet->fd, &d, 1 ));
@@ -614,10 +614,12 @@ static void debug_show_data( uint8_t* buf, uint16_t len )
 
 static gboolean fet_module_outgoing_escape_byte( FetModule* fet, uint8_t *d )
 {
+	fet_frame_t *frame;
 	assert( fet != NULL );
+	frame = (fet_frame_t*)g_queue_peek_tail( fet->out_frames );
 
-	if( fet->tx_pos != 0 
-	    && ( *d == 0x7E || *d == 0x7D || *d == 0x11 || *d == 0x13 ) )
+	if( fet->tx_pos != 0 && fet->tx_pos != frame->len + 3
+	    && ( *d == 0x7E || *d == 0x7D ) )
 	{
 		if( !fet->tx_escaped ) {
 			*d = 0x7D;
