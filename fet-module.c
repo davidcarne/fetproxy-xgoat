@@ -29,6 +29,7 @@
 
 #include "xb-fd-source.h"
 #include "fet-module.h"
+#include "crc.h"
 
 gboolean fet_module_io_error( FetModule* xb );
 
@@ -43,8 +44,6 @@ gboolean fet_module_proc_incoming( FetModule* xb );
  * When an error occurs, it returns -1 */
 static int fet_module_read_frame( FetModule* xb  );
 
-static uint8_t fet_module_checksum( uint8_t* buf, uint16_t len );
-
 /* Displays the contents of a frame */
 static void debug_show_frame( uint8_t* buf, uint16_t len );
 
@@ -55,7 +54,9 @@ static void debug_show_data( uint8_t* buf, uint16_t len );
 /* Process outgoing data */
 static gboolean fet_module_proc_outgoing( FetModule* xb );
 
-static uint8_t fet_module_outgoing_escape_byte( FetModule* xb, uint8_t d );
+/* Escape the byte pointed to by d.  Put the result in d.
+ * Returns TRUE if it's OK to move on to the next byte. */
+static gboolean fet_module_outgoing_escape_byte( FetModule* xb, uint8_t *d );
 
 /* Whether data's ready to transmit */
 static gboolean fet_module_outgoing_queued( FetModule* xb );
@@ -86,8 +87,6 @@ void fet_instance_init( GTypeInstance *xb, gpointer g_class );
 /* Free information related to a module. */
 void fet_free( FetModule* xb );
 
-static uint8_t fet_module_sum_block( uint8_t* buf, uint16_t len, uint8_t cur );
-
 static void fet_module_print_stats( FetModule* xb );
 
 static gboolean fd_set_nonblocking( int fd );
@@ -96,67 +95,64 @@ gboolean fet_init( FetModule* xb )
 {
 	assert( xb != NULL );
 
-	if( !fet_serial_init( xb ) )
-		return FALSE;
+/* 	if( !fet_serial_init( xb ) ) */
+/* 		return FALSE; */
 
 	return TRUE;
 }
 
 static uint8_t fet_module_outgoing_next( FetModule* fet )
 {
-	const uint8_t FRAME_START = 0x7E;
+	const uint8_t FRAME_BOUNDARY = 0x7E;
 	fet_frame_t* frame;
 
 	assert( fet != NULL );
 
-	g_error( "FAIL: FetModule doesn't support output" );
-
 	frame = (fet_frame_t*)g_queue_peek_tail( fet->out_frames );
 
 	if( fet->tx_pos == 0 )
-		return FRAME_START;
-	else if( fet->tx_pos == 1 )
-		return (frame->len >> 8) & 0xFF;
-	else if( fet->tx_pos == 2 )
-		return frame->len & 0xFF;
+		return FRAME_BOUNDARY;
+	else if( fet->tx_pos < frame->len + 1 )
+		return frame->data[ fet->tx_pos - 1 ];
 	else if( fet->tx_pos < frame->len + 3 )
 	{
-		/* next byte to be transmitted in the frame buffer */
-		uint16_t dpos = fet->tx_pos - 3; 
-
-		return frame->data[ dpos ];
-	}
-	else
-	{
-		if( !fet->checked )
-		{
+		if( !fet->checked ) {
 			/* Calculate checksum */
-			fet->o_chk = fet_module_sum_block( frame->data, frame->len, 0 );
-			fet->o_chk = 0xFF - fet->o_chk;
+			fet->o_chk = crc_block( frame->data, frame->len );
+			fet->checked = TRUE;
 		}
 
-		return fet->o_chk;
+		if( fet->tx_pos == frame->len + 1 )
+			/* Low byte */
+			return (fet->o_chk) & 0xff;
+		else
+			/* High byte */
+			return (fet->o_chk >> 8) & 0xff;
+	} else if ( fet->tx_pos == frame->len + 3 ) {
+		return FRAME_BOUNDARY;
 	}
+	else
+		g_error( "Trying to transmit past end of frame" );
+	
 }
 
 /* This function needs a bit of cleanup */
 static gboolean fet_module_proc_outgoing( FetModule* fet )
 {
-	uint8_t d;
-	ssize_t w;
-	fet_frame_t* frame;
-
-	g_error( "FAIL: outgoing goo not supported" );
 	assert( fet != NULL );
-	/* If there's an item in the list, transmit part of it */
 
+	/* If there's an item in the list, transmit part of it */
 	while( g_queue_get_length( fet->out_frames ) )
 	{
+		fet_frame_t* frame;
+		gboolean inc;
+		uint8_t d;
+		ssize_t w;
+
 		frame = (fet_frame_t*)g_queue_peek_tail( fet->out_frames );
 		d = fet_module_outgoing_next( fet );
 
-		/* Get the byte to read */
-		d = fet_module_outgoing_escape_byte( fet, d );
+		inc = TRUE; //fet_module_outgoing_escape_byte( fet, &d );
 
 		/* write data */
 		w = TEMP_FAILURE_RETRY(write( fet->fd, &d, 1 ));
@@ -169,9 +165,9 @@ static gboolean fet_module_proc_outgoing( FetModule* fet )
 		}
 		if( w == 0 ) continue;
 
-		if( fet->tx_pos > 0 && d == 0x7D )
-			fet->tx_escaped = TRUE;
-		else
+		printf( "Tx: 0x%2.2hhx (pos=%hu)\n", d, fet->tx_pos );
+
+		if( inc )
 			fet->tx_pos += w;
 
 		fet->bytes_tx += w;
@@ -199,17 +195,6 @@ static gboolean fet_module_outgoing_queued( FetModule* fet )
 		return TRUE;
 	else
 		return FALSE;
-}
-
-static uint8_t fet_module_sum_block( uint8_t* buf, uint16_t len, uint8_t cur )
-{
-	assert( buf != NULL );
-	g_error( "FAIL: fet_module_sum_block: I don't work, and probably shouldn't be used" );
-
-	for( ; len > 0; len-- )
-		cur += buf[len - 1];
-
-	return cur;
 }
 
 static void fet_module_out_queue_add_frame( FetModule* xb, fet_frame_t* frame )
@@ -241,24 +226,7 @@ static void fet_module_out_queue_del( FetModule* xb )
 int fet_module_transmit( FetModule* xb, void* buf, uint8_t len )
 {
 	fet_frame_t *frame;
-	uint8_t* pos;
 	assert( xb != NULL && buf != NULL );
-
-	g_error( "FAIL: fetproxy doesn't support transmitting" );
-
-	/* 64-bit address frame structure:
-	 * 0: API Identifier: 0x00
-	 * 1: Frame ID
-	 * 2-9: Target address - MSB first
-	 * 10: Option flags
-	 * 11...10+len: Data */
-
-	/* 16-bit address frame structure:
-	 * 0: API Identifier: 0x01
-	 * 1: Frame ID
-	 * 2-3: Target address - MSB first
-	 * 4: Option flags
-	 * 5...4+len: Data */
 
 	printf("Transmitting: ");
 	debug_show_data( buf, len );
@@ -266,37 +234,11 @@ int fet_module_transmit( FetModule* xb, void* buf, uint8_t len )
 
 	frame = g_malloc( sizeof(fet_frame_t) );
 
-	/* Calculate frame length */
-/* 	if( addr->type == XB_ADDR_16 ) */
-/* 		frame->len = len + 5; */
-/* 	else */
-/* 		frame->len = len + 11; */
-
+	/* Allocate memory for the data and it's sentinel and checksum */
 	frame->data = g_malloc( frame->len );
+	g_memmove( frame->data, buf, len );
 
-/* 	if( addr->type == XB_ADDR_64 ) */
-/* 	{ */
-/* 		frame->data[0] = 0x00; /\* API Identifier *\/ */
-/* 		/\* Copy address *\/ */
-/* 		g_memmove( &frame->data[2], addr->addr, 8 ); */
-/* 		pos = &frame->data[10];  */
-/* 	} */
-/* 	else */
-/* 	{ */
-/* 		frame->data[0] = 0x01; /\* API Identifier *\/ */
-/* 		/\* Copy address *\/ */
-/* 		g_memmove( &frame->data[2], addr->addr, 2 ); */
-/* 		pos = &frame->data[4]; */
-/* 	} */
-	/* pos now pointing at option byte */
-	*pos = 0;		/* TODO: Option byte */
-	pos ++;
-
-	/* Frame ID: */
-	frame->data[1] = 0;	/* TODO: Frame ID */
-
-	/* Copy data */
-	g_memmove( pos, buf, len );
+	frame->len = len;
 
 	fet_module_out_queue_add_frame( xb, frame );
 
@@ -348,8 +290,7 @@ gboolean fet_serial_init( FetModule* xb )
 		fprintf( stderr, "Failed to get terminal device information: %m\n" );
 		return 0;
 	}
-	
-	
+
 	switch( xb->parity )
 	{
 	case PARITY_NONE:
@@ -446,34 +387,34 @@ gboolean fet_serial_init( FetModule* xb )
 FetModule* fet_module_open( char* fname, GMainContext *context,
 			      guint baud, guint init_baud )
 {
-	FetModule *xb = NULL;
+	FetModule *fet = NULL;
 	assert( fname != NULL );
 
-	xb = g_object_new( FET_MODULE_TYPE, NULL  );
+	fet = g_object_new( FET_MODULE_TYPE, NULL  );
 
-	xb->fd = open( fname, O_RDWR | O_NONBLOCK );
-	if( xb->fd < 0 )
+	fet->fd = open( fname, O_RDWR | O_NONBLOCK );
+	if( fet->fd < 0 )
 	{
 		fprintf( stderr, "Error: Failed to open serial port\n" );
 		return NULL; 
 	}
 	
-	if( !fd_set_nonblocking( xb->fd ) )
+	if( !fd_set_nonblocking( fet->fd ) )
 		return FALSE;
 
-	xb->baud = baud;
-	xb->init_baud = init_baud;
+	fet->baud = baud;
+	fet->init_baud = init_baud;
 
-	if( !fet_init( xb ) )
+	if( !fet_init( fet ) )
 		return FALSE;
 
-	xb->source = xbee_fd_source_new( xb->fd, context, (gpointer)xb,
+	fet->source = xbee_fd_source_new( fet->fd, context, (gpointer)fet,
 					 (xbee_fd_callback)fet_module_proc_incoming,
 					 (xbee_fd_callback)fet_module_proc_outgoing,
 					 (xbee_fd_callback)fet_module_io_error,
 					 (xbee_fd_callback)fet_module_outgoing_queued );
 					 
-	return xb;
+	return fet;
 }
 
 void fet_module_close( FetModule* xb )
@@ -512,7 +453,6 @@ GType fet_module_get_type( void )
 void fet_instance_init( GTypeInstance *gti, gpointer g_class )
 {
 	FetModule *xb = (FetModule*)gti;
-	uint16_t i;
 
 	/* The default serial mode is 9600bps 8n1  */
 	xb->baud = 9600;
@@ -539,7 +479,7 @@ void fet_instance_init( GTypeInstance *gti, gpointer g_class )
 gboolean fet_module_proc_incoming( FetModule* xb )
 {
 	assert( xb != NULL );
-	g_error( "FAIL: Reading incoming bytes is unsupported" );
+/* 	g_error( "FAIL: Reading incoming bytes is unsupported" ); */
 
 	while( fet_module_read_frame( xb ) == 0 )
 	{
@@ -560,6 +500,8 @@ int fet_module_read_frame( FetModule* xb )
 	gboolean whole_frame = FALSE;
 	assert( xb != NULL && xb->in_len < FET_INBUF_LEN );
 
+	printf( "READ\n" );
+
 	while( !whole_frame )
 	{
 		r = TEMP_FAILURE_RETRY( read( xb->fd,  &d, 1 ) );
@@ -576,71 +518,73 @@ int fet_module_read_frame( FetModule* xb )
 		/* Serial devices can return 0 - but doesn't mean EOF */
 		if( r == 0 ) break;
 
+		printf( "Read: 0x%2.2hhx\n", d );
 
-/*  		printf( "Read: %2.2X\n", (unsigned int)d ); */
 		xb->bytes_rx ++;
 
-		/* If we come across the beginning of a frame */
-		if( d == 0x7E )
 		{
-			/* Discard current data */
-			xb->bytes_discarded += xb->in_len;
-			xb->in_len = 1;
-			xb->inbuf[0] = d;
+/* 		/\* If we come across the beginning of a frame *\/ */
+/* 		if( d == 0x7E ) */
+/* 		{ */
+/* 			/\* Discard current data *\/ */
+/* 			xb->bytes_discarded += xb->in_len; */
+/* 			xb->in_len = 1; */
+/* 			xb->inbuf[0] = d; */
 
-			/* Cancel escaping */
-			xb->escape = FALSE;
-		}
-		else
-		{
-			/* Unescape data if necessary */
-			if( xb->escape ) 
-			{
-				d ^= 0x20;
-				xb->escape = FALSE;
-			}
-			else if( d == 0x7D )
-				xb->escape = TRUE;
+/* 			/\* Cancel escaping *\/ */
+/* 			xb->escape = FALSE; */
+/* 		} */
+/* 		else */
+/* 		{ */
+/* 			/\* Unescape data if necessary *\/ */
+/* 			if( xb->escape )  */
+/* 			{ */
+/* 				d ^= 0x20; */
+/* 				xb->escape = FALSE; */
+/* 			} */
+/* 			else if( d == 0x7D ) */
+/* 				xb->escape = TRUE; */
 
-			/* Make sure we don't overflow the buffer */
-			if( xb->in_len == FET_INBUF_LEN )
-			{
-				fprintf( stderr, "Warning: Incoming frame too long - discarding\n" );
-				xb->bytes_discarded += xb->in_len;
-				xb->in_len = 0;
-			}
+/* 			/\* Make sure we don't overflow the buffer *\/ */
+/* 			if( xb->in_len == FET_INBUF_LEN ) */
+/* 			{ */
+/* 				fprintf( stderr, "Warning: Incoming frame too long - discarding\n" ); */
+/* 				xb->bytes_discarded += xb->in_len; */
+/* 				xb->in_len = 0; */
+/* 			} */
 
-			if( !xb->escape )
-			{
-				xb->inbuf[ xb->in_len ] = d;
-				xb->in_len ++;
-			}
+/* 			if( !xb->escape ) */
+/* 			{ */
+/* 				xb->inbuf[ xb->in_len ] = d; */
+/* 				xb->in_len ++; */
+/* 			} */
 
-		}
+/* 		} */
 
-		if( xb->in_len >= 3 )
-		{
-			uint16_t flen;
+/* 		if( xb->in_len >= 3 ) */
+/* 		{ */
+/* 			uint16_t flen; */
 
-			flen = (xb->inbuf[1]) << 8 | xb->inbuf[2];
+/* 			flen = (xb->inbuf[1]) << 8 | xb->inbuf[2]; */
 
-			if( xb->in_len >= (flen + 4) )
-			{
-				uint8_t chk;
+/* 			if( xb->in_len >= (flen + 4) ) */
+/* 			{ */
+/* 				uint8_t chk; */
 
-				/* Check the checksum */
-				chk = fet_module_checksum( &xb->inbuf[3], flen );
+/* 				/\* Check the checksum *\/ */
+/* 				chk = fet_module_checksum( &xb->inbuf[3], flen ); */
 
-				if( chk == xb->inbuf[ flen + 3 ] )				    
-					whole_frame = TRUE;
-				else
-				{
-					/* Checksum invalid */
-					memmove( xb->inbuf, &xb->inbuf[flen + 4], xb->in_len - (flen + 4 ) );
-					printf( "Checksum invalid\n" );
-					xb->frames_discarded ++;
-				}
-			}
+/* 				if( chk == xb->inbuf[ flen + 3 ] )				     */
+/* 					whole_frame = TRUE; */
+/* 				else */
+/* 				{ */
+/* 					/\* Checksum invalid *\/ */
+/* 					memmove( xb->inbuf, &xb->inbuf[flen + 4], xb->in_len - (flen + 4 ) ); */
+/* 					printf( "Checksum invalid\n" ); */
+/* 					xb->frames_discarded ++; */
+/* 				} */
+/* 			} */
+/* 		} */
 		}
 	}
 
@@ -649,19 +593,6 @@ int fet_module_read_frame( FetModule* xb )
 
 	xb->frames_rx++;
 	return 0;	/* Whole frame */
-}
-
-static uint8_t fet_module_checksum( uint8_t* buf, uint16_t len )
-{
-	uint8_t c = 0;
-	assert( buf != NULL );
-
-	g_error( "FAIL: FET checksums not yet supported" );
-
-	for( ; len > 0; len -- )
-		c += buf[len - 1];
-
-	return 0xFF - c;
 }
 
 void debug_show_frame( uint8_t* buf, uint16_t len )
@@ -681,22 +612,26 @@ static void debug_show_data( uint8_t* buf, uint16_t len )
 	}
 }
 
-static uint8_t fet_module_outgoing_escape_byte( FetModule* xb, uint8_t d )
+static gboolean fet_module_outgoing_escape_byte( FetModule* fet, uint8_t *d )
 {
-	assert( xb != NULL );
+	assert( fet != NULL );
 
-	if( xb->tx_pos != 0 && ( d == 0x7E || d == 0x7D || d == 0x11 || d == 0x13 ) )
+	if( fet->tx_pos != 0 
+	    && ( *d == 0x7E || *d == 0x7D || *d == 0x11 || *d == 0x13 ) )
 	{
-		if( !xb->tx_escaped )
-			d = 0x7D;
-		else
-		{
-			d ^= 0x20;
-			xb->tx_escaped = FALSE;
+		if( !fet->tx_escaped ) {
+			*d = 0x7D;
+			fet->tx_escaped = TRUE;
+			return FALSE;
+		} else {
+			*d ^= 0x20;
+			fet->tx_escaped = FALSE;
+			return TRUE;
 		}
-	}
+	} 
 
-	return d;
+	fet->tx_escaped = FALSE;
+	return TRUE;
 }
 
 gboolean fet_module_io_error( FetModule* xb )

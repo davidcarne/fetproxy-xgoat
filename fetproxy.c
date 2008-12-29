@@ -14,6 +14,18 @@ static GOptionEntry entries[] =
 	{ NULL }
 };
 
+gboolean munge_stuff( gpointer data )
+{
+	FetModule *fet = (FetModule*)data;
+	uint8_t d[] = { 0x0d, 0x02, 0x02, 0x00, /* read command */
+			0xc0, 0xff, 0x00, 0x00, /* offset */
+			64, 0, 0, 0 }; /* length */
+
+	fet_module_transmit( fet, d, sizeof(d) );
+
+	return FALSE;
+}
+
 int main( int argc, char** argv )
 {
 	GMainContext *context;
@@ -32,9 +44,11 @@ int main( int argc, char** argv )
 		g_return_val_if_fail( fet != NULL, 1 );
 	}
 
+	g_timeout_add( 500, munge_stuff, (gpointer)fet );
+
 	g_main_loop_run( ml );
 
-/* 	xbee_module_close( xb ); */
+	fet_module_close( fet );
 
 	return 0;
 }

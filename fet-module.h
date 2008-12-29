@@ -30,6 +30,9 @@
 #define FET_INBUF_LEN 512
 #define FET_OUTBUF_LEN 512
 
+/* Frames that head out of the FET.
+ * Data is the frame payload.
+ * i.e. it does _not_ contain the frame sentinels or checksum */
 typedef struct
 {
 	uint16_t len;
@@ -78,7 +81,7 @@ struct fet_ts
 	GQueue* out_frames; 
 
 	/* Checksum value for the currently transmitting frame */
-	uint8_t o_chk;
+	uint16_t o_chk;
 	gboolean checked;	/* Whether the checksum has been calculated */
 	gboolean tx_escaped;	/* Whether the next byte has been escaped */
 	/* The next byte to be transmitted within the current frame */
