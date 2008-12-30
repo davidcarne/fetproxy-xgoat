@@ -93,8 +93,6 @@ struct fet_ts
 	uint8_t inbuf[FET_INBUF_LEN];
 	/* The number of bytes in the input buffer */
 	uint16_t in_len;
-	/* Whether the next byte received should be escaped */
-	gboolean escape;
 
 	/* Callback for receiving a frame.
 	 * The data pointed to contains the beginning part of the frame */

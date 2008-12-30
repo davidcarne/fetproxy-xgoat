@@ -464,7 +464,6 @@ void fet_instance_init( GTypeInstance *gti, gpointer g_class )
 	xb->out_frames = g_queue_new();
 
 	xb->in_len = 0;
-	xb->escape = FALSE;
 
 	xb->bytes_discarded = 0;
 	xb->frames_discarded = 0;
@@ -534,20 +533,9 @@ int fet_module_read_frame( FetModule* fet )
 			fet->in_len = 0;
 		}
 		
-		/* Unescape data if necessary */
-		if( fet->escape )
-		{
-			d ^= 0x20;
-			fet->escape = FALSE;
+		fet->inbuf[ fet->in_len ] = d;
+		fet->in_len ++;
 
-		}
-		else if( d == 0x7D )
-			fet->escape = TRUE;
-
-		if( !fet->escape ) {
-			fet->inbuf[ fet->in_len ] = d;
-			fet->in_len ++;
-		}
 
 		if( fet->in_len >= 2 )
 		{
@@ -579,9 +567,6 @@ int fet_module_read_frame( FetModule* fet )
 				}
 
 				fet->in_len = 0;
-
-				/* Cancel escaping */
-				fet->escape = FALSE;
 			}
 		}
 	}
