@@ -161,9 +161,12 @@ gboolean send_elf_timeout( gpointer data )
 		if( cur_sec == text ) {
 			cur_sec = vectors;
 			pos = 0;
-		} else
+		} else {
+			fet_cmd_run( fet );
+
 			/* Stop calling me */
 			return FALSE;
+		}
 	}
 
 	return TRUE;

@@ -72,4 +72,6 @@ void fet_cmd_reset( FetModule *fet,
 
 void fet_cmd_close( FetModule *fet );
 
+void fet_cmd_run( FetModule *fet );
+
 #endif	/* __FET_COMMANDS */

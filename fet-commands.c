@@ -183,3 +183,12 @@ void fet_cmd_close( FetModule *fet )
 
 	fet_module_transmit( fet, d, sizeof(d) );
 }
+
+void fet_cmd_run( FetModule *fet )
+{
+	uint8_t d[12] = { 0x11, 0x02, 0x02, 0x00,
+			  0x03, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00 };
+
+	fet_module_transmit( fet, d, sizeof(d) );
+}
