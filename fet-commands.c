@@ -43,12 +43,11 @@ void fet_cmd_read_mem( FetModule* fet,
 		       uint16_t addr,
 		       uint16_t len )
 {
-/* 	uint8_t e[12] = { 0x0D, 0x02, 0x02, 0x00, */
-/* 			  addr & 0xff, (addr>>8) & 0xff, 0x00, 0x00, */
-/* 			  len & 0xff, (len>>8) & 0xff, 0x00, 0x00 }; */
+	uint8_t e[12] = { 0x0D, 0x02, 0x02, 0x00,
+			  addr & 0xff, (addr>>8) & 0xff, 0x00, 0x00,
+			  len & 0xff, (len>>8) & 0xff, 0x00, 0x00 };
 
-	g_error( "FAIL" );
-
+	fet_module_transmit( fet, e, sizeof(e) );
 }
 
 void fet_cmd_open( FetModule* fet )
@@ -90,5 +89,97 @@ void fet_cmd_identify( FetModule *fet )
 			 0x00, 0x00, 0x00, 0x00 };
 
 	fet_module_transmit( fet, d, sizeof(d) );
+}
 
+void fet_cmd_write_context( FetModule *fet, uint16_t *regs )
+{
+	const uint8_t cmd[] = { 0x09, 0x04, 0x01, 0x00,
+				0xff, 0xff, 0x00, 0x00, 
+				0x40, 0x00, 0x00, 0x00 };
+	uint8_t d[12 + 64 + 1];
+	uint8_t i;
+
+	/* Copy the command in */
+	g_memmove( d, cmd, 12 );
+
+	for( i=0; i<16; i++ ) {
+		uint8_t *p = d+12 + (i*4);
+
+		p[0] = regs[i] & 0xff;
+		p[1] = (regs[i] >> 8) & 0xff;
+		p[2] = p[3] = 0;
+	}
+	
+	d[12+64] = 0;
+
+	fet_module_transmit( fet, d, sizeof(d) );
+}
+
+void fet_cmd_read_context( FetModule *fet )
+{
+	uint8_t d[4] = { 0x08, 0x01 };
+
+	fet_module_transmit( fet, d, sizeof(d) );
+}
+
+void fet_cmd_erase( FetModule *fet, 
+		    fet_cmd_erase_t s,
+		    uint16_t addr )
+{
+	uint8_t d[16] = { 0x0C, 0x02, 0x03, 0x00,
+			  0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00 };
+	uint8_t t;
+	uint16_t m;
+
+	switch(s) {
+	case FET_ERASE_ALL:
+		t = 0x02;
+		addr = 0xffe0;
+		m = 0x0002;
+		break;
+
+	case FET_ERASE_MAIN:
+		t = 0x01;
+		addr = 0xffe0;
+		m = 0x0002;
+		break;
+
+	case FET_ERASE_ADDR:
+		t = 0x00;
+		m = 0x0002;
+		break;
+
+	case FET_ERASE_INFO:
+		t = 0x00;
+		m = 0x0100;
+		addr = 0x1000;
+		break;
+	}
+
+	d[4] = t;
+	d[8] = addr & 0xff;
+	d[9] = (addr>>8) & 0xff;
+	d[12] = m & 0xff;
+	d[13] = (m>>8) & 0xff;
+
+	fet_module_transmit( fet, d, sizeof(d) );
+}
+
+void fet_cmd_reset( FetModule *fet, uint8_t rtype, gboolean dirty )
+{
+	uint8_t d[16] = { 0x07, 0x02, 0x03, 0x00,
+			  rtype, 0x00, 0x00, 0x00,
+			  dirty?0x00:0x01, 0x00, 0x00, 0x00,
+			  dirty?0x00:0x01, 0x00, 0x00, 0x00 };
+
+	fet_module_transmit( fet, d, sizeof(d) );
+}
+
+void fet_cmd_close( FetModule *fet )
+{
+	uint8_t d[4] = { 0x02, 0x02, 0x01, 0x00 };
+
+	fet_module_transmit( fet, d, sizeof(d) );
 }
