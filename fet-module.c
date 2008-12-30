@@ -223,7 +223,7 @@ static void fet_module_out_queue_del( FetModule* xb )
 	g_queue_pop_tail( xb->out_frames );
 }
 
-int fet_module_transmit( FetModule* xb, void* buf, uint8_t len )
+int fet_module_transmit( FetModule* xb, const void* buf, uint8_t len )
 {
 	fet_frame_t *frame;
 	assert( xb != NULL && buf != NULL );

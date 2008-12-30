@@ -119,7 +119,7 @@ void fet_module_close( FetModule *xb );
 void fet_module_add_source( FetModule *xb, GMainContext *context );
 
 /* Transmit a frame */
-int fet_module_transmit( FetModule* fet, void* buf, uint8_t len );
+int fet_module_transmit( FetModule* fet, const void* buf, uint8_t len );
 
 /* Register Callbacks */
 /* void fet_module_register_callbacks ( FetModule *xb, fet_module_events_t *callbacks, gpointer *userdata); */
