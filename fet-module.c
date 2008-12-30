@@ -165,7 +165,7 @@ static gboolean fet_module_proc_outgoing( FetModule* fet )
 		}
 		if( w == 0 ) continue;
 
-		printf( "Tx: 0x%2.2hhx (pos=%hu)\n", d, fet->tx_pos );
+/* 		printf( "Tx: 0x%2.2hhx (pos=%hu)\n", d, fet->tx_pos ); */
 
 		if( inc )
 			fet->tx_pos += w;
@@ -228,7 +228,7 @@ int fet_module_transmit( FetModule* xb, void* buf, uint8_t len )
 	fet_frame_t *frame;
 	assert( xb != NULL && buf != NULL );
 
-	printf("Transmitting: ");
+	printf("Out: ");
 	debug_show_data( buf, len );
 	printf("\n");
 
@@ -476,14 +476,17 @@ void fet_instance_init( GTypeInstance *gti, gpointer g_class )
 	xb->tx_escaped = FALSE;
 }
 
-gboolean fet_module_proc_incoming( FetModule* xb )
+gboolean fet_module_proc_incoming( FetModule* fet )
 {
-	assert( xb != NULL );
-/* 	g_error( "FAIL: Reading incoming bytes is unsupported" ); */
+	assert( fet != NULL );
 
-	while( fet_module_read_frame( xb ) == 0 )
+	while( fet_module_read_frame( fet ) == 0 )
 	{
+		uint16_t flen = ((uint16_t)fet->inbuf[1]) << 8 | fet->inbuf[0];
 
+		printf( "In: " );
+		debug_show_data( fet->inbuf + 2, flen - 2 );
+		printf("\n");
 	}
 
 	return TRUE;
@@ -493,18 +496,16 @@ gboolean fet_module_proc_incoming( FetModule* xb )
  * When a full frame is achieved, it returns 0.
  * When a full frame has not been acheived, it returns 1.
  * When an error occurs, it returns -1 */
-int fet_module_read_frame( FetModule* xb )
+int fet_module_read_frame( FetModule* fet )
 {
 	int r;
 	uint8_t d;
 	gboolean whole_frame = FALSE;
-	assert( xb != NULL && xb->in_len < FET_INBUF_LEN );
-
-	printf( "READ\n" );
+	assert( fet != NULL && fet->in_len < FET_INBUF_LEN );
 
 	while( !whole_frame )
 	{
-		r = TEMP_FAILURE_RETRY( read( xb->fd,  &d, 1 ) );
+		r = TEMP_FAILURE_RETRY( read( fet->fd,  &d, 1 ) );
 
 		if( r == -1 )
 		{
@@ -518,80 +519,77 @@ int fet_module_read_frame( FetModule* xb )
 		/* Serial devices can return 0 - but doesn't mean EOF */
 		if( r == 0 ) break;
 
-		printf( "Read: 0x%2.2hhx\n", d );
+/* 		printf( "Read: 0x%2.2hhx (in_len = %hu)\n", d, fet->in_len ); */
 
-		xb->bytes_rx ++;
+		fet->bytes_rx ++;
 
+		/* FIXME:  At the moment, this assumes that we don't miss any bytes from 
+		   the FET tool.  This should be changed. */
+
+		/* Make sure we don't overflow the buffer */
+		if( fet->in_len >= FET_INBUF_LEN )
 		{
-/* 		/\* If we come across the beginning of a frame *\/ */
-/* 		if( d == 0x7E ) */
-/* 		{ */
-/* 			/\* Discard current data *\/ */
-/* 			xb->bytes_discarded += xb->in_len; */
-/* 			xb->in_len = 1; */
-/* 			xb->inbuf[0] = d; */
+			fprintf( stderr, "Warning: Incoming frame too long - discarding\n" );
+			fet->bytes_discarded += fet->in_len;
+			fet->in_len = 0;
+		}
+		
+		/* Unescape data if necessary */
+		if( fet->escape )
+		{
+			d ^= 0x20;
+			fet->escape = FALSE;
 
-/* 			/\* Cancel escaping *\/ */
-/* 			xb->escape = FALSE; */
-/* 		} */
-/* 		else */
-/* 		{ */
-/* 			/\* Unescape data if necessary *\/ */
-/* 			if( xb->escape )  */
-/* 			{ */
-/* 				d ^= 0x20; */
-/* 				xb->escape = FALSE; */
-/* 			} */
-/* 			else if( d == 0x7D ) */
-/* 				xb->escape = TRUE; */
+		}
+		else if( d == 0x7D )
+			fet->escape = TRUE;
 
-/* 			/\* Make sure we don't overflow the buffer *\/ */
-/* 			if( xb->in_len == FET_INBUF_LEN ) */
-/* 			{ */
-/* 				fprintf( stderr, "Warning: Incoming frame too long - discarding\n" ); */
-/* 				xb->bytes_discarded += xb->in_len; */
-/* 				xb->in_len = 0; */
-/* 			} */
+		if( !fet->escape ) {
+			fet->inbuf[ fet->in_len ] = d;
+			fet->in_len ++;
+		}
 
-/* 			if( !xb->escape ) */
-/* 			{ */
-/* 				xb->inbuf[ xb->in_len ] = d; */
-/* 				xb->in_len ++; */
-/* 			} */
+		if( fet->in_len >= 2 )
+		{
+			uint16_t flen = ((uint16_t)fet->inbuf[1]) << 8 | fet->inbuf[0];
 
-/* 		} */
+			if( fet->in_len >= (flen + 2) )
+			{
+				uint16_t chk = ((uint16_t)fet->inbuf[flen+1]) << 8 | fet->inbuf[flen];
+				uint16_t calc = crc_block( fet->inbuf + 2, flen - 2 );
 
-/* 		if( xb->in_len >= 3 ) */
-/* 		{ */
-/* 			uint16_t flen; */
+/* 				printf( "Checksumming: " ); */
+/* 				debug_show_data( fet->inbuf + 2, flen - 2 ); */
+/* 				printf ("\n"); */
+				if( calc == chk )
+					whole_frame = TRUE;
+				else {
+					g_error( "FAIL: Checksum incorrect (%4.4hx received, %4.4hx calculated)", chk, calc );
+					memmove( fet->inbuf, 
+						 fet->inbuf + flen + 2, 
+						 fet->in_len - (flen + 2 ) );
 
-/* 			flen = (xb->inbuf[1]) << 8 | xb->inbuf[2]; */
+					printf( "Checksum invalid\n" );
 
-/* 			if( xb->in_len >= (flen + 4) ) */
-/* 			{ */
-/* 				uint8_t chk; */
+					fet->frames_discarded ++;
 
-/* 				/\* Check the checksum *\/ */
-/* 				chk = fet_module_checksum( &xb->inbuf[3], flen ); */
+					/* Discard current data */
+					fet->bytes_discarded += fet->in_len;
+					fet->in_len -= flen + 2;
+				}
 
-/* 				if( chk == xb->inbuf[ flen + 3 ] )				     */
-/* 					whole_frame = TRUE; */
-/* 				else */
-/* 				{ */
-/* 					/\* Checksum invalid *\/ */
-/* 					memmove( xb->inbuf, &xb->inbuf[flen + 4], xb->in_len - (flen + 4 ) ); */
-/* 					printf( "Checksum invalid\n" ); */
-/* 					xb->frames_discarded ++; */
-/* 				} */
-/* 			} */
-/* 		} */
+				fet->in_len = 0;
+
+				/* Cancel escaping */
+				fet->escape = FALSE;
+			}
 		}
 	}
 
 	if( !whole_frame )
 		return 1;	/* Not a whole frame yet */
 
-	xb->frames_rx++;
+	fet->frames_rx++;
 	return 0;	/* Whole frame */
 }
 
