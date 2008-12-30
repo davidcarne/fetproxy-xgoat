@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "fet-module.h"
+#include "fet-commands.h"
 
 void config_create( int argc, char **argv );
 
@@ -14,15 +15,40 @@ static GOptionEntry entries[] =
 	{ NULL }
 };
 
+#define P1DIR 0x22
+#define P1OUT 0x21
+#define P1SEL 0x26
+
 gboolean munge_stuff( gpointer data )
 {
+	uint8_t d;
+	static uint8_t v = 1;
 	FetModule *fet = (FetModule*)data;
-	uint8_t d[] = { 0x0d, 0x02, 0x02, 0x00, /* read command */
-			0xc0, 0xff, 0x00, 0x00, /* offset */
-			64, 0, 0, 0 }; /* length */
 
-	fet_module_transmit( fet, d, sizeof(d) );
+	d = 1;
+	fet_cmd_write_mem( fet, P1DIR, &d, 1 );
 
+	d = 0;
+	fet_cmd_write_mem( fet, P1SEL, &d, 1 );
+
+	fet_cmd_write_mem( fet, P1OUT, &v, 1 );
+	v ^= 1;
+
+	return TRUE;
+}
+
+gboolean init_stuff( gpointer data )
+{
+	FetModule *fet = (FetModule*)data;
+
+	fet_cmd_open(fet);
+	fet_cmd_init(fet);
+	fet_cmd_conf(fet, TRUE);
+	fet_cmd_set_vcc( fet, 3000 );
+	fet_cmd_identify( fet );
+
+	g_timeout_add( 500, munge_stuff, (gpointer)fet );
+	munge_stuff((gpointer)fet);
 	return FALSE;
 }
 
@@ -44,7 +70,7 @@ int main( int argc, char** argv )
 		g_return_val_if_fail( fet != NULL, 1 );
 	}
 
-	g_timeout_add( 500, munge_stuff, (gpointer)fet );
+	g_timeout_add( 0, init_stuff, (gpointer)fet );
 
 	g_main_loop_run( ml );
 
