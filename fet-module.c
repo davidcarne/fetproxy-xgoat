@@ -235,7 +235,8 @@ int fet_module_transmit( FetModule* xb, void* buf, uint8_t len )
 	frame = g_malloc( sizeof(fet_frame_t) );
 
 	/* Allocate memory for the data and it's sentinel and checksum */
-	frame->data = g_malloc( frame->len );
+	frame->data = g_malloc( len );
+	assert( frame->data != NULL );
 	g_memmove( frame->data, buf, len );
 
 	frame->len = len;
