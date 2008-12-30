@@ -11,6 +11,13 @@ void send_elf( FetModule *fet, char* fname );
 
 void send_elf_section( FetModule *fet, elf_section_t* sec );
 
+elf_section_t *cur_sec = NULL;
+elf_section_t *text = NULL, *vectors = NULL;
+
+gboolean send_elf_timeout( gpointer data );
+
+void send_elf_section_chunk( FetModule *fet, elf_section_t* sec, uint32_t *pos );
+
 static gchar *sdev = "/dev/ttyUSB0";
 static gchar *elf_file = NULL;
 static GMainLoop *ml = NULL;
@@ -47,7 +54,6 @@ gboolean munge_stuff( gpointer data )
 gboolean init_stuff( gpointer data )
 {
 	FetModule *fet = (FetModule*)data;
-	uint16_t regs[16];
 
 	fet_cmd_open(fet);
 	fet_cmd_init(fet);
@@ -55,8 +61,10 @@ gboolean init_stuff( gpointer data )
 	fet_cmd_set_vcc( fet, 3000 );
 	fet_cmd_identify( fet );
 
-	if( elf_file != NULL )
+	if( elf_file != NULL ) {
+		fet_cmd_erase( fet, FET_ERASE_ALL, 0 );
 		send_elf( fet, elf_file );
+	}
 	else {
 		g_timeout_add( 500, munge_stuff, (gpointer)fet );
 		munge_stuff((gpointer)fet);
@@ -112,34 +120,51 @@ void config_create( int argc, char **argv )
 
 void send_elf( FetModule *fet, char* fname )
 {
-	elf_section_t *text, *vectors;
-
 	elf_access_load_sections( fname, &text, &vectors );
-	send_elf_section( fet, text );
-	send_elf_section( fet, vectors );
+
+	g_timeout_add( 200, send_elf_timeout, (gpointer)fet );
 }
 
-void send_elf_section( FetModule *fet, elf_section_t* section )
+void send_elf_section_chunk( FetModule *fet, elf_section_t* section, uint32_t *pos )
 {
-	uint32_t pos;
+	uint32_t rem;
 	const uint8_t CHUNK_LEN = 32;
+	g_assert( (*pos) < section->len );
 
-	for( pos = 0;
-	     pos < section->len;
-	     pos += CHUNK_LEN ) {
-		uint32_t rem;
-		
-		rem = section->len - pos;
-		
-		if( rem < CHUNK_LEN )
-			fet_cmd_write_mem( fet, 
-					   section->addr + pos,
-					   section->data + pos,
-					   rem );
-		else
-			fet_cmd_write_mem( fet, 
-					   section->addr + pos,
-					   section->data + pos,
-					   CHUNK_LEN );
+	rem = section->len - (*pos);
+
+	if( rem < CHUNK_LEN )
+		fet_cmd_write_mem( fet, 
+				   section->addr + (*pos),
+				   section->data + (*pos),
+				   rem );
+	else
+		fet_cmd_write_mem( fet, 
+				   section->addr + (*pos),
+				   section->data + (*pos),
+				   CHUNK_LEN );
+
+	*pos += CHUNK_LEN;
+}
+
+gboolean send_elf_timeout( gpointer data )
+{
+	static uint32_t pos = 0;
+	FetModule *fet = (FetModule*)data;
+
+	if( cur_sec == NULL )
+		cur_sec = text;
+
+	send_elf_section_chunk( fet, cur_sec, &pos );
+	
+	if( pos >= cur_sec->len ) {
+		if( cur_sec == text ) {
+			cur_sec = vectors;
+			pos = 0;
+		} else
+			/* Stop calling me */
+			return FALSE;
 	}
+
+	return TRUE;
 }
