@@ -1,5 +1,5 @@
 /* A glib source for monitoring a file descriptor. 
-   Copyright (C) 2007 Robert Spanton, Philip Smith
+   Copyright (C) 2008 Robert Spanton, Philip Smith
 
    This file part of libxb.
 
