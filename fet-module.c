@@ -89,11 +89,11 @@ static void fet_module_print_stats( FetModule* xb );
 
 static gboolean fd_set_nonblocking( int fd );
 
-gboolean fet_init( FetModule* xb )
+gboolean fet_init( FetModule* fet )
 {
-	assert( xb != NULL );
+	assert( fet != NULL );
 
-/* 	if( !fet_serial_init( xb ) ) */
+/* 	if( !fet_serial_init( fet ) ) */
 /* 		return FALSE; */
 
 	return TRUE;
@@ -195,12 +195,12 @@ static gboolean fet_module_outgoing_queued( FetModule* fet )
 		return FALSE;
 }
 
-static void fet_module_out_queue_add_frame( FetModule* xb, fet_frame_t* frame )
+static void fet_module_out_queue_add_frame( FetModule* fet, fet_frame_t* frame )
 {
-	assert( xb != NULL && frame != NULL );
+	assert( fet != NULL && frame != NULL );
 
-	g_queue_push_head( xb->out_frames, frame );
-	xbee_fd_source_data_ready( xb->source );
+	g_queue_push_head( fet->out_frames, frame );
+	xbee_fd_source_data_ready( fet->source );
 }
 
 
@@ -273,24 +273,24 @@ void fet_free( FetModule* xb )
 	xb->out_frames = NULL;
 }
 
-gboolean fet_serial_init( FetModule* xb )
+gboolean fet_serial_init( FetModule* fet )
 {
 	struct termios t;
-	assert( xb != NULL );
+	assert( fet != NULL );
 
-	if( !isatty( xb->fd ) )
+	if( !isatty( fet->fd ) )
 	{
 		fprintf( stderr, "File isn't a serial device\n" );
 		return FALSE;
 	}
 
-	if( tcgetattr( xb->fd, &t ) < 0 )
+	if( tcgetattr( fet->fd, &t ) < 0 )
 	{
 		fprintf( stderr, "Failed to get terminal device information: %m\n" );
 		return 0;
 	}
 
-	switch( xb->parity )
+	switch( fet->parity )
 	{
 	case PARITY_NONE:
 		t.c_iflag &= ~INPCK;
@@ -315,7 +315,7 @@ gboolean fet_serial_init( FetModule* xb )
 	/* Keep carriage returns & prevent carriage return translation */
 	t.c_iflag &= ~(ISTRIP | IGNBRK | IGNCR | ICRNL);
 
-	switch( xb->flow_control )
+	switch( fet->flow_control )
 	{
 	case FLOW_NONE:
 		t.c_iflag &= ~( IXOFF | IXON );
@@ -343,7 +343,7 @@ gboolean fet_serial_init( FetModule* xb )
 	/* Don't use the carrier detect lines  */
 	t.c_cflag |= CREAD | CS8 | CLOCAL;
 
-	switch( xb->stop_bits )
+	switch( fet->stop_bits )
 	{
 	case 0:
 		/*  */
@@ -371,13 +371,13 @@ gboolean fet_serial_init( FetModule* xb )
 	t.c_lflag |= ECHONL;
 
 
-	if( tcsetattr( xb->fd, TCSANOW, &t ) < 0 )
+	if( tcsetattr( fet->fd, TCSANOW, &t ) < 0 )
 	{
 		fprintf( stderr, "Failed to configure terminal settings: %m\n" );
 		return FALSE;
 	}
 
-	if( !fet_serial_baud_set( xb->fd, xb->init_baud ) )
+	if( !fet_serial_baud_set( fet->fd, fet->init_baud ) )
 		return FALSE;
 
 	return TRUE;
