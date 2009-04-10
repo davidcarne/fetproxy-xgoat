@@ -28,13 +28,16 @@
 #include "xb-fd-source.h"
 #include "fet-module.h"
 #include "crc.h"
+#include "serial.h"
 
-gboolean fet_module_io_error( FetModule* xb );
+gboolean fet_module_io_error( GIOChannel *source, GIOCondition condition,
+			      gpointer _fet );
 
 /*** Incoming Data Functions ***/
 
 /* Process incoming data */
-gboolean fet_module_proc_incoming( FetModule* xb );
+gboolean fet_module_proc_incoming( GIOChannel *source, GIOCondition condition,
+				   gpointer _fet );
 
 /* Reads in available bytes from the input.
  * When a full frame is achieved, it returns 0.
@@ -45,12 +48,13 @@ static int fet_module_read_frame( FetModule* xb  );
 /* Displays the contents of a frame */
 static void debug_show_frame( uint8_t* buf, uint16_t len );
 
-static void debug_show_data( uint8_t* buf, uint16_t len );
+static void debug_show_data( const uint8_t* buf, uint16_t len );
 
 /*** Outgoing Queue Functions ***/
 
 /* Process outgoing data */
-static gboolean fet_module_proc_outgoing( FetModule* xb );
+static gboolean fet_module_proc_outgoing( GIOChannel *source, GIOCondition condition,
+					  gpointer _fet );
 
 /* Escape the byte pointed to by d.  Put the result in d.
  * Returns TRUE if it's OK to move on to the next byte. */
@@ -72,13 +76,6 @@ static void fet_module_out_queue_del( FetModule* xb );
 /*** "Internal" Client API Functions ***/
 
 /* Configure the serial port */
-gboolean fet_serial_init( FetModule* xb );
-
-/* Set the serial port baud rate */
-gboolean fet_serial_baud_set( int fd, uint32_t baud );
-
-/* Initialise the module. */
-gboolean fet_init( FetModule* xb );
 
 void fet_instance_init( GTypeInstance *xb, gpointer g_class );
 
@@ -86,18 +83,6 @@ void fet_instance_init( GTypeInstance *xb, gpointer g_class );
 void fet_free( FetModule* xb );
 
 static void fet_module_print_stats( FetModule* xb );
-
-static gboolean fd_set_nonblocking( int fd );
-
-gboolean fet_init( FetModule* fet )
-{
-	assert( fet != NULL );
-
-/* 	if( !fet_serial_init( fet ) ) */
-/* 		return FALSE; */
-
-	return TRUE;
-}
 
 static uint8_t fet_module_outgoing_next( FetModule* fet )
 {
@@ -135,9 +120,13 @@ static uint8_t fet_module_outgoing_next( FetModule* fet )
 }
 
 /* This function needs a bit of cleanup */
-static gboolean fet_module_proc_outgoing( FetModule* fet )
+static gboolean fet_module_proc_outgoing( GIOChannel *source, GIOCondition condition,
+					  gpointer _fet )
 {
+	FetModule *fet = (FetModule*)_fet;
+	GIOChannel *ioc;
 	assert( fet != NULL );
+	ioc = serial_conn_get_io_channel( fet->serial );
 
 	/* If there's an item in the list, transmit part of it */
 	while( g_queue_get_length( fet->out_frames ) )
@@ -145,7 +134,9 @@ static gboolean fet_module_proc_outgoing( FetModule* fet )
 		fet_frame_t* frame;
 		gboolean inc;
 		uint8_t d;
-		ssize_t w;
+		gsize w;
+		GError *error = NULL;
+		GIOStatus s;
 
 		frame = (fet_frame_t*)g_queue_peek_tail( fet->out_frames );
 		d = fet_module_outgoing_next( fet );
@@ -153,17 +144,17 @@ static gboolean fet_module_proc_outgoing( FetModule* fet )
 		inc = fet_module_outgoing_escape_byte( fet, &d );
 
 		/* write data */
-		w = TEMP_FAILURE_RETRY(write( fet->fd, &d, 1 ));
-		if( w == -1 && errno == EAGAIN )
-			break;
-		if( w == -1 )
-		{
-			fprintf( stderr, "Error writing to file: %m\n" );
-			return FALSE;
-		}
-		if( w == 0 ) continue;
+		s = g_io_channel_write_chars( ioc, (gchar*)&d, 1, &w, &error );
 
-/* 		printf( "Tx: 0x%2.2hhx (pos=%hu)\n", d, fet->tx_pos ); */
+		if( s == G_IO_STATUS_AGAIN )
+			break;
+
+		if( s == G_IO_STATUS_ERROR )
+			g_error( "Error writing to file: %s", error->message );
+
+		g_assert( s == G_IO_STATUS_NORMAL );
+
+		if( w == 0 ) continue;
 
 		if( inc )
 			fet->tx_pos += w;
@@ -180,6 +171,11 @@ static gboolean fet_module_proc_outgoing( FetModule* fet )
 
 			fet_module_print_stats( fet );
 		}
+	}
+
+	if( !fet_module_outgoing_queued(fet) ) {
+		fet->mon_write = FALSE;
+		return FALSE; 
 	}
 
 	return TRUE;
@@ -200,9 +196,12 @@ static void fet_module_out_queue_add_frame( FetModule* fet, fet_frame_t* frame )
 	assert( fet != NULL && frame != NULL );
 
 	g_queue_push_head( fet->out_frames, frame );
-	xbee_fd_source_data_ready( fet->source );
-}
 
+	if( !fet->mon_write ) {
+		g_io_add_watch( fet->ioc, G_IO_OUT, fet_module_proc_outgoing, fet );
+		fet->mon_write = TRUE;
+	}
+}
 
 static void fet_module_out_queue_del( FetModule* xb )
 {
@@ -256,7 +255,6 @@ static void fet_module_print_stats( FetModule* xb )
 		(long unsigned int)xb->bytes_tx );
 }
 
-
 void fet_free( FetModule* xb )
 {
 	assert( xb != NULL );
@@ -273,158 +271,48 @@ void fet_free( FetModule* xb )
 	xb->out_frames = NULL;
 }
 
-gboolean fet_serial_init( FetModule* fet )
-{
-	struct termios t;
-	assert( fet != NULL );
-
-	if( !isatty( fet->fd ) )
-	{
-		fprintf( stderr, "File isn't a serial device\n" );
-		return FALSE;
-	}
-
-	if( tcgetattr( fet->fd, &t ) < 0 )
-	{
-		fprintf( stderr, "Failed to get terminal device information: %m\n" );
-		return 0;
-	}
-
-	switch( fet->parity )
-	{
-	case PARITY_NONE:
-		t.c_iflag &= ~INPCK;
-		t.c_cflag &= ~PARENB;
-		break;
-
-	case PARITY_ODD:
-		t.c_cflag |= PARODD;
-
-	case PARITY_EVEN:
-		t.c_cflag &= ~PARODD;
-		
-		t.c_iflag |= INPCK;
-		t.c_cflag |= PARENB;
-	}
-	
-	/* Ignore bytes with parity errors */
-	t.c_iflag |= IGNPAR;
-
-	/* 8 bits */
-	/* Ignore break conditions */
-	/* Keep carriage returns & prevent carriage return translation */
-	t.c_iflag &= ~(ISTRIP | IGNBRK | IGNCR | ICRNL);
-
-	switch( fet->flow_control )
-	{
-	case FLOW_NONE:
-		t.c_iflag &= ~( IXOFF | IXON );
- 		t.c_cflag &= ~CRTSCTS;
-		break;
-
-	case FLOW_RTSCTS:
-		t.c_cflag |= CRTSCTS;
-		break;
-
-	case FLOW_SOFTWARE:
- 		t.c_cflag |= CRTSCTS;
-		t.c_iflag |= IXOFF | IXON;
-	}
-
-/* 	t.c_cflag &= ~MDMBUF; */
-
-	/* Disable character mangling */
-	t.c_oflag &= ~OPOST;
-	
-	/* No modem disconnect excitement */
-	t.c_cflag &= ~(HUPCL | CSIZE);
-
-	/* Use input from the terminal */
-	/* Don't use the carrier detect lines  */
-	t.c_cflag |= CREAD | CS8 | CLOCAL;
-
-	switch( fet->stop_bits )
-	{
-	case 0:
-		/*  */
-		t.c_cflag &= ~CSTOPB;
-		break;
-
-	case 1:
-		/*  */
-		t.c_cflag &= ~CSTOPB;
-		break;
-
-	case 2:
-		/*  */
-		t.c_cflag |= CSTOPB;
-		break;
-	}
-
-	/*** c_lflag stuff ***/
-	/* non-canonical (i.e. non-line-based) */
-	/* no input character looping */
-	/* no erase printing or usage */
-	/* no special character processing */
-	t.c_lflag &= ~(ICANON | ECHO | ECHO | ECHOPRT | ECHOK
-			| ECHOKE | ISIG | IEXTEN | TOSTOP /* | NOKERNINFO */ );
-	t.c_lflag |= ECHONL;
-
-
-	if( tcsetattr( fet->fd, TCSANOW, &t ) < 0 )
-	{
-		fprintf( stderr, "Failed to configure terminal settings: %m\n" );
-		return FALSE;
-	}
-
-	if( !fet_serial_baud_set( fet->fd, fet->init_baud ) )
-		return FALSE;
-
-	return TRUE;
-}
-
-FetModule* fet_module_open( char* fname, GMainContext *context,
-			      guint baud, guint init_baud )
+FetModule* fet_module_open( char* fname, GMainContext *context )
 {
 	FetModule *fet = NULL;
+	const serial_settings_t settings =
+	{
+		.baud = 460800,
+		.parity = PARITY_NONE,
+		.stop_bits = 1,
+		.flow_control = FLOW_NONE
+	};
 	assert( fname != NULL );
 
 	fet = g_object_new( FET_MODULE_TYPE, NULL  );
 
-	fet->fd = open( fname, O_RDWR | O_NONBLOCK );
-	if( fet->fd < 0 )
-	{
-		fprintf( stderr, "Error: Failed to open serial port\n" );
-		return NULL; 
-	}
-	
-	if( !fd_set_nonblocking( fet->fd ) )
-		return FALSE;
+	/* Open the serial device */
+	fet->serial = serial_conn_open( fname, &settings );
 
-	fet->baud = baud;
-	fet->init_baud = init_baud;
+	if( fet->serial == NULL )
+		g_error( "Failed to open serial... TODO: more error info :-/\n" );
 
-	if( !fet_init( fet ) )
-		return FALSE;
+	fet->ioc = serial_conn_get_io_channel( fet->serial );
 
-	fet->source = xbee_fd_source_new( fet->fd, context, (gpointer)fet,
-					 (xbee_fd_callback)fet_module_proc_incoming,
-					 (xbee_fd_callback)fet_module_proc_outgoing,
-					 (xbee_fd_callback)fet_module_io_error,
-					 (xbee_fd_callback)fet_module_outgoing_queued );
-					 
+	g_io_add_watch( fet->ioc, G_IO_IN, fet_module_proc_incoming, fet );
+
+	g_io_add_watch( fet->ioc, G_IO_OUT, fet_module_proc_outgoing, fet );
+	fet->mon_write = TRUE;
+
+	g_io_add_watch( fet->ioc, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+			fet_module_io_error, fet );
+
 	return fet;
 }
 
-void fet_module_close( FetModule* xb )
+void fet_module_close( FetModule* fet )
 {
-	assert( xb != NULL );
+	assert( fet != NULL );
 
-	close( xb->fd );
+	printf( "TODO: Close fd etc...\n" );
 
-	fet_free( xb );
+	fet_free( fet );
 
-	g_object_unref( xb );
+	g_object_unref( fet );
 }
 
 GType fet_module_get_type( void )
@@ -451,33 +339,32 @@ GType fet_module_get_type( void )
 
 void fet_instance_init( GTypeInstance *gti, gpointer g_class )
 {
-	FetModule *xb = (FetModule*)gti;
+	FetModule *fet = (FetModule*)gti;
 
-	/* The default serial mode is 9600bps 8n1  */
-	xb->baud = 9600;
-	xb->init_baud = 9600;
-	xb->parity = PARITY_NONE;
-	xb->stop_bits = 1;
-	xb->flow_control = FLOW_NONE;
+	fet->serial = NULL;
+	fet->mon_write = FALSE;
+	fet->ioc = NULL;
+	fet->out_frames = g_queue_new();
 
-	xb->out_frames = g_queue_new();
+	fet->in_len = 0;
 
-	xb->in_len = 0;
+	fet->bytes_discarded = 0;
+	fet->frames_discarded = 0;
+	fet->bytes_rx = fet->bytes_tx = 0;
+	fet->frames_rx = fet->frames_tx = 0;
 
-	xb->bytes_discarded = 0;
-	xb->frames_discarded = 0;
-	xb->bytes_rx = xb->bytes_tx = 0;
-	xb->frames_rx = xb->frames_tx = 0;
-
-	xb->o_chk = xb->tx_pos = 0;
-	xb->checked = FALSE;
-	xb->tx_escaped = FALSE;
+	fet->o_chk = fet->tx_pos = 0;
+	fet->checked = FALSE;
+	fet->tx_escaped = FALSE;
 }
 
-gboolean fet_module_proc_incoming( FetModule* fet )
+gboolean fet_module_proc_incoming( GIOChannel *source, GIOCondition condition,
+				   gpointer _fet )
 {
+	FetModule *fet = (FetModule*)_fet;
 	assert( fet != NULL );
 
+	printf( "INCOMING\n" );
 	while( fet_module_read_frame( fet ) == 0 )
 	{
 		uint16_t flen = ((uint16_t)fet->inbuf[1]) << 8 | fet->inbuf[0];
@@ -496,28 +383,33 @@ gboolean fet_module_proc_incoming( FetModule* fet )
  * When an error occurs, it returns -1 */
 int fet_module_read_frame( FetModule* fet )
 {
-	int r;
-	uint8_t d;
 	gboolean whole_frame = FALSE;
+	GIOChannel *ioc;
 	assert( fet != NULL && fet->in_len < FET_INBUF_LEN );
+
+	ioc = serial_conn_get_io_channel( fet->serial );
 
 	while( !whole_frame )
 	{
-		r = TEMP_FAILURE_RETRY( read( fet->fd,  &d, 1 ) );
+		uint8_t d;
+		gsize r;
+		GError *error = NULL;
+		GIOStatus s = g_io_channel_read_chars( ioc, (char*)&d, 1, &r, &error );
 
-		if( r == -1 )
-		{
-			if ( errno == EAGAIN )
-				break;
+		if( s == G_IO_STATUS_AGAIN )
+			break;
 
-			fprintf( stderr, "Error: Failed to read input: %m\n" );
-			return -1;
-		}
+		/* Serial devices can return no bytes on POSIX systems */
+		if( s == G_IO_STATUS_EOF )
+			break;
+
+		if( s == G_IO_STATUS_ERROR )
+			g_error( "Failed to read input: %s", error->message );
+
+		g_assert( s == G_IO_STATUS_NORMAL );
 
 		/* Serial devices can return 0 - but doesn't mean EOF */
 		if( r == 0 ) break;
-
-/* 		printf( "Read: 0x%2.2hhx (in_len = %hu)\n", d, fet->in_len ); */
 
 		fet->bytes_rx ++;
 
@@ -584,7 +476,7 @@ void debug_show_frame( uint8_t* buf, uint16_t len )
 	printf("\n");
 }
 
-static void debug_show_data( uint8_t* buf, uint16_t len )
+static void debug_show_data( const uint8_t* buf, uint16_t len )
 {
 	uint16_t i;
 
@@ -618,57 +510,10 @@ static gboolean fet_module_outgoing_escape_byte( FetModule* fet, uint8_t *d )
 	return TRUE;
 }
 
-gboolean fet_module_io_error( FetModule* xb )
+gboolean fet_module_io_error( GIOChannel *source, GIOCondition condition,
+			      gpointer _fet )
 {
 	fprintf( stderr, "Erk, error.  I should do something\n" );
 	return FALSE;
 }
 
-gboolean fet_serial_baud_set( int fd, uint32_t baud )
-{
-	struct termios t;
-
-	if( tcgetattr( fd, &t ) < 0 )
-	{
-		fprintf( stderr, "Failed to get terminal device information: %m\n" );
-		return FALSE;
-	}
-
-	if( cfsetspeed( &t, baud ) < 0 )
-	{
-		fprintf( stderr, "Failed to set serial baud rate to %u: %m\n", baud );
-		return FALSE;
-	}
-
-	g_debug( "Setting baud to %u", baud );
-
-	if( tcsetattr( fd, TCSANOW, &t ) < 0 )
-	{
-		fprintf( stderr, "Failed to configure terminal settings: %m\n" );
-		return FALSE;
-	}
-
-	return TRUE;
-}
-
-static gboolean fd_set_nonblocking( int fd )
-{
-	int flags;
-
-	flags = fcntl( fd, F_GETFL );
-	if( flags == -1 )
-	{
-		fprintf( stderr, "Failed to set non-blocking IO: %m\n" );
-		return FALSE;
-	}
-
-	flags |= O_NONBLOCK;
-
-	if( fcntl( fd, F_SETFL, flags ) == -1 )
-	{
-		fprintf( stderr, "Failed to set non-blocking IO: %m\n" );
-		return FALSE;
-	}
-
-	return TRUE;
-}

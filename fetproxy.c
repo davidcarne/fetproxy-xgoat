@@ -102,7 +102,7 @@ int main( int argc, char** argv )
 
 	if( sdev != NULL )
 	{
-		fet = fet_module_open( sdev, context, 9600, 9600 );
+		fet = fet_module_open( sdev, context );
 		g_return_val_if_fail( fet != NULL, 1 );
 	}
 

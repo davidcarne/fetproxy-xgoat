@@ -8,7 +8,7 @@ LDFLAGS += `pkg-config --libs gobject-2.0`
 
 LDFLAGS += -lelf
 
-fetproxy: fetproxy.o fet-module.o xb-fd-source.o crc.o fet-commands.o elf-access.o
+fetproxy: fetproxy.o fet-module.o crc.o fet-commands.o elf-access.o serial.o
 
 .PHONY: clean
 

@@ -26,6 +26,7 @@
 #include <glib.h>
 #include <glib-object.h>
 #include "xb-fd-source.h"
+#include "serial.h"
 
 #define FET_INBUF_LEN 512
 #define FET_OUTBUF_LEN 512
@@ -64,16 +65,11 @@ struct fet_ts
 	GObject parent;
 
 	/* private */
-	int fd;
-
-	xbee_fd_source_t *source;
-	guint source_id;
-
-	/*** serial configuration ***/
-	uint32_t baud, init_baud;
-	enum { PARITY_NONE, PARITY_ODD, PARITY_EVEN } parity;
-	uint8_t stop_bits;
-	enum { FLOW_NONE, FLOW_RTSCTS, FLOW_SOFTWARE } flow_control;
+	SerialConn *serial;
+	/* Whether we're currently following writability */
+	gboolean mon_write;
+	/* The channel for monitoring the serial */
+	GIOChannel *ioc;
 
 	/*** Transmission ***/
 	/* Queue of outgoing frames - all of xb_frame_t */
@@ -109,8 +105,7 @@ struct fet_ts
 /* Create a connection to an xbee.
  * Opens the serial port given in fname, and fills the 
  * structure *xb with stuff. */
-FetModule* fet_module_open( char *fname, GMainContext *context,
-			      guint baud, guint init_baud );
+FetModule* fet_module_open( char *fname, GMainContext *context );
 
 /* Close an xbee connection */
 void fet_module_close( FetModule *xb );
@@ -123,8 +118,5 @@ int fet_module_transmit( FetModule* fet, const void* buf, uint8_t len );
 
 /* Register Callbacks */
 /* void fet_module_register_callbacks ( FetModule *xb, fet_module_events_t *callbacks, gpointer *userdata); */
-
-/* Set the serial port baud rate (really private) */
-gboolean fet_serial_baud_set( int fd, uint32_t baud );
 
 #endif	/* __FET_MODULE_H */
