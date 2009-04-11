@@ -19,6 +19,11 @@ static gboolean gdb_client_hup( GIOChannel *source,
 /* Process an incoming byte */
 static void gdb_client_proc_byte( GdbClient *cli, uint8_t b );
 
+static uint8_t gdb_client_checksum( uint8_t* data, uint16_t len );
+
+/* Process a received frame */
+static void gdb_client_proc_frame( GdbClient *cli );
+
 /* Return in the lower nibble.
  * 0xff if the character isn't found. */
 static uint8_t hex_dig_to_nibble( gchar h )
@@ -170,6 +175,8 @@ static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 
 			if( cli->chk_recv_pos == 2 ) {
 				debug_frame_out( cli->inbuf, cli->inpos );
+				if( gdb_client_checksum( cli->inbuf, cli->inpos ) == cli->chk_recv )
+					gdb_client_proc_frame( cli );
 				cli->received_frame_start = FALSE;
 			}
 
@@ -190,4 +197,20 @@ static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 		}
 	} else
 		g_debug( "Ignoring incoming character '%c'", b );
+}
+
+static uint8_t gdb_client_checksum( uint8_t* data, uint16_t len )
+{
+	uint32_t i;
+	uint8_t c = 0;
+
+	for( i=0; i<len; i++ )
+		c += data[i];
+
+	return c;
+}
+
+static void gdb_client_proc_frame( GdbClient *cli )
+{
+	g_debug( "Yay, received frame" );
 }
