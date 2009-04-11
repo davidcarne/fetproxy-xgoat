@@ -34,9 +34,14 @@ struct gdb_client_ts
 
 	uint8_t inbuf[GDB_CLIENT_INBUF_LEN];
 	uint16_t inpos;
-	gboolean received_frame_start;
-	/* Whether we've received the end-of-frame marker before the checksum */
-	gboolean received_frame_end;
+
+	/* The receiver state */
+	enum {
+		GDB_REM_RECV_IDLE,
+		GDB_REM_RECV_DATA,
+		GDB_REM_RECV_CHECKSUM
+	} recv_state;
+
 
 	/* The received checksum */
 	uint8_t chk_recv;

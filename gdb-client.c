@@ -78,8 +78,8 @@ static void gdb_client_instance_init( GTypeInstance *gti, gpointer g_class )
 
 	rem->sock = NULL;
 	rem->inpos = 0;
-	rem->received_frame_start = FALSE;
-	rem->received_frame_end = FALSE;
+	rem->recv_state = GDB_REM_RECV_IDLE;
+
 	rem->chk_recv = 0;
 	rem->chk_recv_pos = 0;
 }
@@ -149,27 +149,37 @@ static gboolean gdb_client_hup( GIOChannel *source,
 
 static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 {
-	if( !cli->received_frame_start && b == '$' ) {
-		cli->received_frame_start = TRUE;
-		cli->received_frame_end = FALSE;
+	switch( cli->recv_state ) {
+	case GDB_REM_RECV_IDLE:
 		cli->inpos = 0;
 		cli->chk_recv = 0;
 		cli->chk_recv_pos = 0;
-		return;
-	}
 
-	if( cli->received_frame_start ) {
+		if( b == '$' )
+			cli->recv_state = GDB_REM_RECV_DATA;
+		break;
 
-		if( cli->received_frame_end ) {
-			/* Character from checksum */
-			uint8_t c = hex_dig_to_nibble(b);
+	case GDB_REM_RECV_DATA:
+		if( b == '#' )
+			cli->recv_state = GDB_REM_RECV_CHECKSUM;
+		else if( cli->inpos > GDB_CLIENT_INBUF_LEN ) {
+			g_warning( "Incoming frame buffer to long to store incoming frame -- discarding." );
+			cli->recv_state = GDB_REM_RECV_IDLE;
+		} else {
+			cli->inbuf[ cli->inpos ] = b;
+			cli->inpos++;
+		}
+		break;
 
-			if( c == 0xff ) {
-				g_warning( "Invalid character received in checksum field" );
-				cli->received_frame_start = FALSE;
-				return;
-			}
+	case GDB_REM_RECV_CHECKSUM:
+	{
+		/* Character from checksum */
+		uint8_t c = hex_dig_to_nibble(b);
 
+		if( c == 0xff ) {
+			g_warning( "Invalid character received in checksum field" );
+			cli->recv_state = GDB_REM_RECV_IDLE;
+		} else {
 			cli->chk_recv |= c << (4 * (1-cli->chk_recv_pos));
 			cli->chk_recv_pos++;
 
@@ -177,26 +187,16 @@ static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 				debug_frame_out( cli->inbuf, cli->inpos );
 				if( gdb_client_checksum( cli->inbuf, cli->inpos ) == cli->chk_recv )
 					gdb_client_proc_frame( cli );
-				cli->received_frame_start = FALSE;
+
+				cli->recv_state = GDB_REM_RECV_IDLE;
 			}
-
-			return;
 		}
+		break;		
+	}
 
-		if( b == '#' ) {
-			cli->received_frame_end = TRUE;
-			return;
-		}
-
-		cli->inbuf[ cli->inpos ] = b;
-		cli->inpos++;
-
-		if( cli->inpos > GDB_CLIENT_INBUF_LEN ) {
-			g_warning( "Incoming frame buffer to long to store incoming frame -- discarding." );
-			cli->received_frame_start = FALSE;
-		}
-	} else
+	default:
 		g_debug( "Ignoring incoming character '%c'", b );
+	}
 }
 
 static uint8_t gdb_client_checksum( uint8_t* data, uint16_t len )
