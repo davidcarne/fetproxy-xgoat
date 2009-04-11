@@ -77,7 +77,7 @@ SerialConn* serial_conn_open( char *fname, const serial_settings_t *settings )
 
 	sc->fd = open( fname, O_RDWR | O_NONBLOCK );
 	if( sc->fd < 0 ) {
-		fprintf( stderr, "Error: Failed to open serial port\n" );
+		fprintf( stderr, "Error: Failed to open serial port: %m\n" );
 		return NULL; 
 	}
 
