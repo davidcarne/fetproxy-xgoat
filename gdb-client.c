@@ -183,6 +183,11 @@ static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 
 		cli->inbuf[ cli->inpos ] = b;
 		cli->inpos++;
+
+		if( cli->inpos > GDB_CLIENT_INBUF_LEN ) {
+			g_warning( "Incoming frame buffer to long to store incoming frame -- discarding." );
+			cli->received_frame_start = FALSE;
+		}
 	} else
 		g_debug( "Ignoring incoming character '%c'", b );
 }
