@@ -15,11 +15,13 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 #include <glib.h>
+#include <gnet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "fet-module.h"
 #include "fet-commands.h"
 #include "elf-access.h"
+#include "gdb-remote.h"
 
 void config_create( int argc, char **argv );
 
@@ -36,12 +38,14 @@ void send_elf_section_chunk( FetModule *fet, elf_section_t* sec, uint32_t *pos )
 
 static gchar *sdev = "/dev/ttyUSB0";
 static gchar *elf_file = NULL;
+static gint port = 2000;
 static GMainLoop *ml = NULL;
 
 static GOptionEntry entries[] = 
 {
 	{ "serial", 's', 0, G_OPTION_ARG_FILENAME, &sdev, "FET Serial Device" },
 	{ "load-file", 'l', 0, G_OPTION_ARG_FILENAME, &elf_file, "ELF file to load into device" },
+	{ "port", 'p', 0, G_OPTION_ARG_INT, &port, "Port to listen for gdb on" },
 	{ NULL }
 };
 
@@ -92,8 +96,10 @@ int main( int argc, char** argv )
 {
 	GMainContext *context;
 	FetModule *fet;
+	GdbRemote *rem;
 
 	g_type_init();
+	gnet_init();
 
 	config_create( argc, argv );
 
@@ -105,6 +111,8 @@ int main( int argc, char** argv )
 		fet = fet_module_open( sdev, context );
 		g_return_val_if_fail( fet != NULL, 1 );
 	}
+
+	rem = gdb_remote_listen( port );
 
 	g_timeout_add( 0, init_stuff, (gpointer)fet );
 
