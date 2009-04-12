@@ -11,6 +11,11 @@ static gboolean gdb_client_incoming( GIOChannel *source,
 				     GIOCondition cond,
 				     gpointer _cli );
 
+/* Socket write callback */
+static gboolean gdb_client_write_cb( GIOChannel *source,
+				     GIOCondition cond,
+				     gpointer _cli );
+
 /* HUP handler  */
 static gboolean gdb_client_hup( GIOChannel *source,
 				GIOCondition cond,
@@ -23,6 +28,13 @@ static uint8_t gdb_client_checksum( uint8_t* data, uint16_t len );
 
 /* Process a received frame */
 static void gdb_client_proc_frame( GdbClient *cli );
+
+/* Add a frame to the transmit queue.
+ * Copies the data. */
+static void gdb_client_tx_queue( GdbClient *cli,
+				 gboolean wrap,
+				 uint8_t *data,
+				 uint16_t len );
 
 /* Return in the lower nibble.
  * 0xff if the character isn't found. */
@@ -83,6 +95,8 @@ static void gdb_client_instance_init( GTypeInstance *gti, gpointer g_class )
 
 	rem->chk_recv = 0;
 	rem->chk_recv_pos = 0;
+
+	rem->out_q = g_queue_new();
 }
 
 GdbClient* gdb_client_new( GTcpSocket *sock )
@@ -221,4 +235,124 @@ static uint8_t gdb_client_checksum( uint8_t* data, uint16_t len )
 static void gdb_client_proc_frame( GdbClient *cli )
 {
 	g_debug( "Yay, received frame" );
+
+	gdb_client_tx_queue( cli, FALSE, (uint8_t*)"+\n", 2 );
+}
+
+static gboolean gdb_client_write_cb( GIOChannel *source,
+				     GIOCondition cond,
+				     gpointer _cli )
+{
+	GdbClient *cli = (GdbClient*)_cli;
+	gdb_client_frame_t *frame = (gdb_client_frame_t*)g_queue_peek_tail( cli->out_q );
+	uint8_t tx;
+	GIOStatus s;
+	gsize w;
+	GError *err = NULL;
+	gboolean lose_frame = FALSE;
+
+	/* No more frames to transmit */
+	if( frame == NULL )
+		return FALSE;
+
+	switch( cli->tx_state ) {
+	case GDB_REM_TX_IDLE:
+		cli->opos = 0;
+
+		cli->tx_state = GDB_REM_TX_DATA;
+
+		if( frame->wrap )
+			tx = '$';
+		else {
+			tx = frame->data[0];
+			cli->opos++;
+
+			if( frame->len == 1 ) {
+				/* We have transmitted all the frame */
+				lose_frame = TRUE;
+				cli->tx_state = GDB_REM_TX_IDLE;
+			}
+		}
+		break;
+
+	case GDB_REM_TX_DATA:
+		tx = frame->data[ cli->opos ];
+		
+		cli->opos++;
+		if( cli->opos == frame->len ) {
+			if( !frame->wrap ) {
+				lose_frame = TRUE;
+				cli->tx_state = GDB_REM_TX_IDLE;
+			} else
+				cli->tx_state = GDB_REM_TX_CHK_BOUNDARY;
+		}
+		break;
+
+	case GDB_REM_TX_CHK_BOUNDARY:
+		tx = '#';
+		cli->o_chk_pos = 0;
+		cli->o_chk = gdb_client_checksum( frame->data, frame->len );
+		cli->tx_state = GDB_REM_TX_CHK;
+		break;
+
+	case GDB_REM_TX_CHK: {
+		const uint8_t lut[] = "0123456789ABCDEF";
+
+		tx = lut[ ( cli->o_chk >> (4*(1-cli->o_chk_pos)) ) & 0x0f ];
+		
+		cli->o_chk_pos++;
+		if( cli->o_chk_pos == 2 ) {
+			lose_frame = TRUE;
+			cli->tx_state = GDB_REM_TX_IDLE;
+		}
+		break;
+	}
+
+	default:
+		g_error( "Erroneous state in tx state machine" );
+
+	}
+
+	if( lose_frame ) {
+		g_queue_pop_tail( cli->out_q );
+		g_free( frame->data );
+		g_free( frame );
+	}
+
+	s = g_io_channel_write_chars( source,
+				      (gchar*)&tx, 1,
+				      &w, &err );
+
+	if( s != G_IO_STATUS_NORMAL )
+		g_error( "Failed to write byte." );
+
+	g_debug( "Wrote '%c'", tx );
+
+	if( g_queue_is_empty( cli->out_q ) )
+		return FALSE;
+
+	return TRUE;
+}
+
+static void gdb_client_tx_queue( GdbClient *cli,
+				 gboolean wrap,
+				 uint8_t *data,
+				 uint16_t len )
+{
+	gdb_client_frame_t *frame;
+
+	frame = g_malloc( sizeof(gdb_client_frame_t) );
+	frame->data = g_memdup( data, len );
+	frame->len = len;
+	frame->wrap = wrap;
+
+	/* If the frame output queue isn't empty, then the write callback
+	   is already configured */
+	if( g_queue_is_empty( cli->out_q ) ) {
+		GIOChannel *c = gnet_tcp_socket_get_io_channel( cli->sock );
+		g_io_add_watch( c, G_IO_OUT, gdb_client_write_cb, cli );
+	}
+
+	/* Add to the queue */
+	g_queue_push_head( cli->out_q, frame );
 }

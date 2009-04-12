@@ -25,6 +25,17 @@ GType gdb_client_get_type( void );
 
 #define GDB_CLIENT_INBUF_LEN 1024
 
+typedef struct
+{
+	/* Whether to wrap the data with the frame header/footer */
+	gboolean wrap;
+
+	/* The frame's data */
+	uint8_t *data;
+	/* The data length */
+	uint16_t len;
+} gdb_client_frame_t;
+
 struct gdb_client_ts
 {
 	GObject parent;
@@ -52,6 +63,29 @@ struct gdb_client_ts
 	/* The received checksum */
 	uint8_t chk_recv;
 	uint8_t chk_recv_pos;
+
+	/*** Transmitter ***/
+
+	/* Outgoing frame queue of gdb_client_frame_t* */
+	GQueue *out_q;
+	uint32_t opos;
+
+	uint8_t o_chk;
+	uint8_t o_chk_pos;
+
+	/* The transmitter state */
+	enum {
+		/* Idle */
+		GDB_REM_TX_IDLE,
+
+		/* Transmitting data */
+		GDB_REM_TX_DATA,
+
+		GDB_REM_TX_CHK_BOUNDARY,
+		GDB_REM_TX_CHK
+
+	} tx_state;
+
 };
 
 /* Create a new client. 
