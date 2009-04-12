@@ -261,9 +261,15 @@ static gboolean gdb_client_write_cb( GIOChannel *source,
 
 		cli->tx_state = GDB_REM_TX_DATA;
 
-		if( frame->wrap )
+		if( frame->wrap ) {
 			tx = '$';
+			
+			if( frame->len == 0 )
+				/* There's no data, so skip to the checksum */
+				cli->tx_state = GDB_REM_TX_CHK_BOUNDARY;
+		}
 		else {
+			g_assert( frame->len > 0 );
 			tx = frame->data[0];
 			cli->opos++;
 
@@ -315,7 +321,10 @@ static gboolean gdb_client_write_cb( GIOChannel *source,
 
 	if( lose_frame ) {
 		g_queue_pop_tail( cli->out_q );
-		g_free( frame->data );
+
+		if( frame->data != NULL )
+			g_free( frame->data );
+
 		g_free( frame );
 	}
 
@@ -342,7 +351,11 @@ static void gdb_client_tx_queue( GdbClient *cli,
 	gdb_client_frame_t *frame;
 
 	frame = g_malloc( sizeof(gdb_client_frame_t) );
-	frame->data = g_memdup( data, len );
+
+	frame->data = NULL;
+	if( len != 0 )
+		frame->data = g_memdup( data, len );
+
 	frame->len = len;
 	frame->wrap = wrap;
 
