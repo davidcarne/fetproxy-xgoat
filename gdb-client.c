@@ -79,6 +79,7 @@ static void gdb_client_instance_init( GTypeInstance *gti, gpointer g_class )
 	rem->sock = NULL;
 	rem->inpos = 0;
 	rem->recv_state = GDB_REM_RECV_IDLE;
+	rem->recv_escape_next = FALSE;
 
 	rem->chk_recv = 0;
 	rem->chk_recv_pos = 0;
@@ -162,10 +163,17 @@ static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 	case GDB_REM_RECV_DATA:
 		if( b == '#' )
 			cli->recv_state = GDB_REM_RECV_CHECKSUM;
+		else if( b == '}' )
+			cli->recv_escape_next = TRUE;
 		else if( cli->inpos > GDB_CLIENT_INBUF_LEN ) {
 			g_warning( "Incoming frame buffer to long to store incoming frame -- discarding." );
 			cli->recv_state = GDB_REM_RECV_IDLE;
 		} else {
+			if( cli->recv_escape_next ) {
+				b ^= 0x20;
+				cli->recv_escape_next = FALSE;
+			}
+
 			cli->inbuf[ cli->inpos ] = b;
 			cli->inpos++;
 		}

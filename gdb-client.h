@@ -37,11 +37,17 @@ struct gdb_client_ts
 
 	/* The receiver state */
 	enum {
+		/* Idle */
 		GDB_REM_RECV_IDLE,
+
+		/* Receiving the packet data */
 		GDB_REM_RECV_DATA,
+
+		/* Receiving the frame checksum */
 		GDB_REM_RECV_CHECKSUM
 	} recv_state;
 
+	gboolean recv_escape_next;
 
 	/* The received checksum */
 	uint8_t chk_recv;
