@@ -25,7 +25,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "xb-fd-source.h"
 #include "fet-module.h"
 #include "crc.h"
 #include "serial.h"

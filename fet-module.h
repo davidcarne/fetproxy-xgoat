@@ -25,7 +25,6 @@
 #include <assert.h>
 #include <glib.h>
 #include <glib-object.h>
-#include "xb-fd-source.h"
 #include "serial.h"
 #include "gdb-client.h"
 
