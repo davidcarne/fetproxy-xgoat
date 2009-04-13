@@ -49,9 +49,10 @@ struct gdb_remote_ts
 
 	/* We currently only support one client */
 	GdbClient *client;
+	gdb_client_callbacks_t client_cb;
 };
 
 /* Start listening on the given port */
-GdbRemote* gdb_remote_listen( uint16_t port );
+GdbRemote* gdb_remote_listen( uint16_t port, gdb_client_callbacks_t *client_cb );
 
 #endif	/* __GDB_REMOTE_H */

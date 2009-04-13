@@ -100,16 +100,18 @@ static void gdb_client_instance_init( GTypeInstance *gti, gpointer g_class )
 
 	rem->out_q = g_queue_new();
 	rem->in_q = g_queue_new();
-	rem->target_proc = FALSE;
+	rem->wait_state = GDB_CLIENT_IDLE;
 }
 
-GdbClient* gdb_client_new( GTcpSocket *sock )
+GdbClient* gdb_client_new( GTcpSocket *sock, gdb_client_callbacks_t *cb )
 {
 	GdbClient *cli = g_object_new( GDB_CLIENT_TYPE, NULL );
 	GIOChannel *c = gnet_tcp_socket_get_io_channel( sock );
 	GError *err = NULL;
 
 	cli->sock = sock;
+	cli->target_cb = cb;
+	cb->init( cli, cb->userdata );
 
 	g_debug( "New client." );
 
@@ -210,6 +212,7 @@ static void gdb_client_proc_byte( GdbClient *cli, uint8_t b )
 
 			if( cli->chk_recv_pos == 2 ) {
 				debug_frame_out( cli->inbuf, cli->inpos );
+				g_debug( "(checksum = %x)", cli->chk_recv );
 				if( gdb_client_checksum( cli->inbuf, cli->inpos ) == cli->chk_recv )
 					gdb_client_proc_frame( cli );
 
@@ -239,6 +242,7 @@ static void gdb_client_proc_frame( GdbClient *cli )
 {
 	gdb_client_frame_t *f;
 
+	g_debug( "Frame added to incoming queue" );
 	/* Stick it on the incoming queue */
 	f = g_malloc( sizeof(gdb_client_frame_t) );
 	f->data = NULL;
@@ -360,6 +364,7 @@ static void gdb_client_tx_queue( GdbClient *cli,
 				 uint16_t len )
 {
 	gdb_client_frame_t *frame;
+	g_debug( "GdbClient: Adding frame to output queue" );
 
 	frame = g_malloc( sizeof(gdb_client_frame_t) );
 
@@ -385,7 +390,7 @@ static void gdb_client_proc_next_frame( GdbClient *cli )
 {
 	gdb_client_frame_t *frame;
 
-	if( cli->target_proc )
+	if( cli->wait_state != GDB_CLIENT_IDLE )
 		return;
 
 	frame = g_queue_peek_head(cli->in_q);
@@ -411,9 +416,13 @@ static void gdb_client_proc_next_frame( GdbClient *cli )
 
 	case 'g':
 		/* gdb wants to know the contents of our registers */
+		cli->wait_state = GDB_CLIENT_REG_READ;
+		cli->target_cb->read_registers( cli->target_cb->userdata );
+		break;
 
-		gdb_client_tx_queue( cli, TRUE, (uint8_t*)"0000000000000000000000000000000000000000000000000000000000000000", 32 );
-		
+	case 'c':
+		cli->wait_state = GDB_CLIENT_CONTINUE;
+		cli->target_cb->cont( cli->target_cb->userdata );
 		break;
 
 	default:
@@ -426,4 +435,42 @@ free_frame:
 		g_free( frame->data );
 	g_free( frame );
 	g_queue_pop_head( cli->in_q );
+}
+
+void gdb_client_command_complete( gdb_client_info_t *state, gpointer _cli )
+{
+	GdbClient *cli = GDB_CLIENT(_cli);
+
+	switch( cli->wait_state ) {
+	case GDB_CLIENT_REG_READ:
+	{
+		const char lut[] = "0123456789abcdef";
+		char buf[64];
+		char *p;
+		uint8_t i;
+
+		for( i=0, p=buf; i<16; i++, p+=4 ) {
+			p[3] = lut[ state->reg[i] & 0x0f ];
+		        p[2] = lut[ (state->reg[i] >> 4) & 0x0f ];
+		        p[1] = lut[ (state->reg[i] >> 8) & 0x0f ];
+		        p[0] = lut[ (state->reg[i] >> 12) & 0x0f ];
+		}
+
+		gdb_client_tx_queue( cli, TRUE, buf, 64 );
+
+		cli->wait_state = GDB_CLIENT_IDLE;
+		break;
+	}
+
+	case GDB_CLIENT_CONTINUE:
+		/* gdb doesn't need to know that the target is now running */
+		cli->wait_state = GDB_CLIENT_IDLE;
+		break;
+
+
+	default:
+		g_debug( "Ignoring command complete call from FetModule" );
+	}
+
+	gdb_client_proc_next_frame( cli );
 }

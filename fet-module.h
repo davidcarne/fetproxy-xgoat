@@ -27,6 +27,7 @@
 #include <glib-object.h>
 #include "xb-fd-source.h"
 #include "serial.h"
+#include "gdb-client.h"
 
 #define FET_INBUF_LEN 512
 #define FET_OUTBUF_LEN 512
@@ -99,7 +100,9 @@ struct fet_ts
 	uint32_t bytes_rx, bytes_tx;   
 	uint32_t frames_rx, frames_tx;  /* Valid checksum frames received */
 
-	/*** FET Properties ***/
+	/* Information about the target's state */
+	gdb_client_info_t target_state;
+	gpointer gdbclient_userdata;
 };
 
 /* Create a connection to an xbee.
@@ -116,7 +119,7 @@ void fet_module_add_source( FetModule *xb, GMainContext *context );
 /* Transmit a frame */
 int fet_module_transmit( FetModule* fet, const void* buf, uint8_t len );
 
-/* Register Callbacks */
-/* void fet_module_register_callbacks ( FetModule *xb, fet_module_events_t *callbacks, gpointer *userdata); */
+/* Initialise the GdbClient <-> FetModule link */
+void fet_module_gdbclient_init( gpointer gdbc, gpointer _fet );
 
 #endif	/* __FET_MODULE_H */

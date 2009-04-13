@@ -50,7 +50,7 @@ void fet_cmd_write_context( FetModule *fet, uint16_t *regs );
 /* Read context.
    Args:
     -  fet: The FetModule to send the command on. */
-void fet_cmd_read_context( FetModule *fet );
+void fet_cmd_read_context( gpointer _fet );
 
 typedef enum {
 	FET_ERASE_ALL,
@@ -87,6 +87,6 @@ void fet_cmd_reset( FetModule *fet,
 
 void fet_cmd_close( FetModule *fet );
 
-void fet_cmd_run( FetModule *fet );
+void fet_cmd_run( gpointer _fet );
 
 #endif	/* __FET_COMMANDS */

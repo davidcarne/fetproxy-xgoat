@@ -367,11 +367,46 @@ gboolean fet_module_proc_incoming( GIOChannel *source, GIOCondition condition,
 	printf( "INCOMING\n" );
 	while( fet_module_read_frame( fet ) == 0 )
 	{
-		uint16_t flen = ((uint16_t)fet->inbuf[1]) << 8 | fet->inbuf[0];
+		uint16_t flen = ( ((uint16_t)fet->inbuf[1]) << 8 | fet->inbuf[0] ) - 2;
+		uint8_t *d = fet->inbuf + 2;
 
 		printf( "In: " );
-		debug_show_data( fet->inbuf + 2, flen - 2 );
+		debug_show_data( fet->inbuf + 2, flen );
 		printf("\n");
+
+		if( flen < 4 )
+			continue;
+
+		/* Some sort of ACK to the continue command */
+		if( d[0] == 0x11 && d[1] == 0x00 && d[2] == 0x00 && d[3] == 0x00 ) {
+			gdb_client_command_complete( &fet->target_state,
+						     fet->gdbclient_userdata );
+			continue;
+		}
+
+		if( flen < 8 )
+			/* Ignore the frame for the moment */
+			continue;
+
+		if( d[0] == 0x08 && d[1] == 0x03 && d[2] == 0x00 && d[3] == 0x00
+		    && d[4] == 0x40 && d[5] == 0x00 && d[6] == 0x00 && d[7] == 0x00 ) {
+			if( flen < 72 ) {
+				g_debug( "Thing with header that looks like registers, but not long enough" );
+				continue;
+			}
+
+			/* Go through the data */
+			uint8_t i;
+			uint8_t *p;
+			for( i=0, p=d+8; i<16; i++, p+=4 )
+				fet->target_state.reg[i] = ((uint16_t)*p) | ((uint16_t)(*(p+1)));
+
+			gdb_client_command_complete( &fet->target_state,
+						     fet->gdbclient_userdata );
+		}
+
+
+
 	}
 
 	return TRUE;
@@ -517,3 +552,9 @@ gboolean fet_module_io_error( GIOChannel *source, GIOCondition condition,
 	return FALSE;
 }
 
+void fet_module_gdbclient_init( gpointer gdbc, gpointer _fet )
+{
+	FetModule *fet = (FetModule*)_fet;
+
+	fet->gdbclient_userdata = gdbc;
+}

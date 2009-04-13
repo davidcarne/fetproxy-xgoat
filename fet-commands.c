@@ -130,8 +130,9 @@ void fet_cmd_write_context( FetModule *fet, uint16_t *regs )
 	fet_module_transmit( fet, d, sizeof(d) );
 }
 
-void fet_cmd_read_context( FetModule *fet )
+void fet_cmd_read_context( gpointer _fet )
 {
+	FetModule *fet = FET_MODULE(_fet);
 	uint8_t d[4] = { 0x08, 0x01 };
 
 	fet_module_transmit( fet, d, sizeof(d) );
@@ -199,8 +200,10 @@ void fet_cmd_close( FetModule *fet )
 	fet_module_transmit( fet, d, sizeof(d) );
 }
 
-void fet_cmd_run( FetModule *fet )
+void fet_cmd_run( gpointer _fet )
 {
+	FetModule *fet = FET_MODULE(_fet);
+
 	uint8_t d[12] = { 0x11, 0x02, 0x02, 0x00,
 			  0x03, 0x00, 0x00, 0x00,
 			  0x00, 0x00, 0x00, 0x00 };

@@ -22,6 +22,7 @@
 #include "fet-commands.h"
 #include "elf-access.h"
 #include "gdb-remote.h"
+#include "gdb-client.h"
 
 void config_create( int argc, char **argv );
 
@@ -71,6 +72,12 @@ int main( int argc, char** argv )
 	GMainContext *context;
 	FetModule *fet;
 	GdbRemote *rem;
+	gdb_client_callbacks_t fet_callbacks =
+	{
+		.init = fet_module_gdbclient_init,
+		.read_registers = fet_cmd_read_context,
+		.cont = fet_cmd_run
+	};
 
 	g_type_init();
 	gnet_init();
@@ -86,7 +93,10 @@ int main( int argc, char** argv )
 		g_return_val_if_fail( fet != NULL, 1 );
 	}
 
-	rem = gdb_remote_listen( port );
+	/* Pass the FetModule* to all the FetModule callbacks */
+	fet_callbacks.userdata = fet;
+
+	rem = gdb_remote_listen( port, &fet_callbacks );
 
 	g_timeout_add( 0, init_stuff, (gpointer)fet );
 

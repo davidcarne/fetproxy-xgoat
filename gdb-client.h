@@ -36,6 +36,28 @@ typedef struct
 	uint16_t len;
 } gdb_client_frame_t;
 
+/* Collection of callbacks for talking to the client */
+typedef struct {
+	/* userdata to pass to all callbacks */
+	gpointer userdata;
+
+	/* Initialise */
+	/* gdbclient_userdata is to be handed to gdb_client_command_complete */
+	void (*init) ( gpointer gdbclient_userdata, gpointer userdata );
+
+	/* Grab registers */
+	void (*read_registers) ( gpointer userdata );
+
+	/* Continue */
+	void (*cont) ( gpointer userdata );
+} gdb_client_callbacks_t;
+
+/* Structure to hold information about the target */
+typedef struct {
+	/* Registers */
+	uint16_t reg[16];
+} gdb_client_info_t;
+
 struct gdb_client_ts
 {
 	GObject parent;
@@ -68,9 +90,6 @@ struct gdb_client_ts
 	 * gdb_client_frame_t* */
 	GQueue *in_q;
 
-	/* Whether the target is processing a command */
-	gboolean target_proc;
-
 	/*** Transmitter ***/
 
 	/* Outgoing frame queue of gdb_client_frame_t* */
@@ -93,12 +112,23 @@ struct gdb_client_ts
 
 	} tx_state;
 
+	gdb_client_callbacks_t *target_cb;
+	enum {
+		GDB_CLIENT_IDLE,
+		GDB_CLIENT_REG_READ,
+		GDB_CLIENT_CONTINUE
+	} wait_state;
+
+	uint8_t reg_num;
 };
 
 /* Create a new client. 
  * Arguments:
  *  - sock: The socket that the client is connected through.
  * Returns: The GdbClient object. */
-GdbClient* gdb_client_new( GTcpSocket *sock );
+GdbClient* gdb_client_new( GTcpSocket *sock, gdb_client_callbacks_t *cb );
+
+/* To be called by the client when it's ready */
+void gdb_client_command_complete( gdb_client_info_t *state, gpointer _cli );
 
 #endif	/* __GDB_CLIENT_H */

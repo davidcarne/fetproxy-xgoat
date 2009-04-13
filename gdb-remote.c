@@ -10,7 +10,7 @@ static void gdb_remote_accept( GTcpSocket *server,
 {
 	GdbRemote *rem = (GdbRemote*)_rem;
 
-	rem->client = gdb_client_new( client );
+	rem->client = gdb_client_new( client, &rem->client_cb );
 }
 
 GType gdb_remote_get_type( void )
@@ -37,10 +37,13 @@ GType gdb_remote_get_type( void )
 
 static void gdb_remote_instance_init( GTypeInstance *gti, gpointer g_class )
 {
-/* 	GdbRemote *rem = (GdbRemote*)gti; */
+	GdbRemote *rem = (GdbRemote*)gti;
+
+	rem->tcp = NULL;
+	rem->client = NULL;
 }
 
-GdbRemote* gdb_remote_listen( uint16_t port )
+GdbRemote* gdb_remote_listen( uint16_t port, gdb_client_callbacks_t *client_cb )
 {
 	GdbRemote *rem = NULL;
 
@@ -51,6 +54,8 @@ GdbRemote* gdb_remote_listen( uint16_t port )
 		g_error( "Failed to listen on port %hhu", port );
 	
 	gnet_tcp_socket_server_accept_async( rem->tcp, gdb_remote_accept, rem );
+
+	rem->client_cb = *client_cb;
 
 	return rem;
 }
