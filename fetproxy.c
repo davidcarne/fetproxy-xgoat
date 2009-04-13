@@ -53,24 +53,6 @@ static GOptionEntry entries[] =
 #define P1OUT 0x21
 #define P1SEL 0x26
 
-gboolean munge_stuff( gpointer data )
-{
-	uint8_t d;
-	static uint8_t v = 1;
-	FetModule *fet = (FetModule*)data;
-
-	d = 1;
-	fet_cmd_write_mem( fet, P1DIR, &d, 1 );
-
-	d = 0;
-	fet_cmd_write_mem( fet, P1SEL, &d, 1 );
-
-	fet_cmd_write_mem( fet, P1OUT, &v, 1 );
-	v ^= 1;
-
-	return TRUE;
-}
-
 gboolean init_stuff( gpointer data )
 {
 	FetModule *fet = (FetModule*)data;
@@ -81,14 +63,6 @@ gboolean init_stuff( gpointer data )
 	fet_cmd_set_vcc( fet, 3000 );
 	fet_cmd_identify( fet );
 
-	if( elf_file != NULL ) {
-		fet_cmd_erase( fet, FET_ERASE_ALL, 0 );
-		send_elf( fet, elf_file );
-	}
-	else {
-		g_timeout_add( 500, munge_stuff, (gpointer)fet );
-		munge_stuff((gpointer)fet);
-	}
 	return FALSE;
 }
 
