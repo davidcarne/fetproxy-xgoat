@@ -64,6 +64,13 @@ struct gdb_client_ts
 	uint8_t chk_recv;
 	uint8_t chk_recv_pos;
 
+	/* Queue of incoming frames (incoming pushed on tail)
+	 * gdb_client_frame_t* */
+	GQueue *in_q;
+
+	/* Whether the target is processing a command */
+	gboolean target_proc;
+
 	/*** Transmitter ***/
 
 	/* Outgoing frame queue of gdb_client_frame_t* */

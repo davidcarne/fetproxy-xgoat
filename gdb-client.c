@@ -36,6 +36,8 @@ static void gdb_client_tx_queue( GdbClient *cli,
 				 uint8_t *data,
 				 uint16_t len );
 
+static void gdb_client_proc_next_frame( GdbClient *cli );
+
 /* Return in the lower nibble.
  * 0xff if the character isn't found. */
 static uint8_t hex_dig_to_nibble( gchar h )
@@ -97,6 +99,8 @@ static void gdb_client_instance_init( GTypeInstance *gti, gpointer g_class )
 	rem->chk_recv_pos = 0;
 
 	rem->out_q = g_queue_new();
+	rem->in_q = g_queue_new();
+	rem->target_proc = FALSE;
 }
 
 GdbClient* gdb_client_new( GTcpSocket *sock )
@@ -234,9 +238,17 @@ static uint8_t gdb_client_checksum( uint8_t* data, uint16_t len )
 
 static void gdb_client_proc_frame( GdbClient *cli )
 {
-	g_debug( "Yay, received frame" );
+	gdb_client_frame_t *f;
 
-	gdb_client_tx_queue( cli, FALSE, (uint8_t*)"+\n", 2 );
+	/* Stick it on the incoming queue */
+	f = g_malloc( sizeof(gdb_client_frame_t) );
+	f->data = NULL;
+	f->len = cli->inpos;
+	if( cli->inpos > 0 )
+		f->data = g_memdup( cli->inbuf, cli->inpos );
+
+	g_queue_push_tail( cli->in_q, f );
+	gdb_client_proc_next_frame( cli );
 }
 
 static gboolean gdb_client_write_cb( GIOChannel *source,
@@ -368,4 +380,51 @@ static void gdb_client_tx_queue( GdbClient *cli,
 
 	/* Add to the queue */
 	g_queue_push_head( cli->out_q, frame );
+}
+
+static void gdb_client_proc_next_frame( GdbClient *cli )
+{
+	gdb_client_frame_t *frame;
+
+	if( cli->target_proc )
+		return;
+
+	frame = g_queue_peek_head(cli->in_q);
+
+	/* No frame there */
+	if( frame == NULL )
+		return;
+
+	if( frame->len == 0 ) {
+		g_warning( "Ignoring zero length frame." );
+		goto free_frame;
+	}
+
+	/* ACK */
+	gdb_client_tx_queue( cli, FALSE, (uint8_t*)"+", 1 );
+
+	switch( cli->inbuf[0] ) {
+	case '?':
+		/* gdb's asking why we halted */
+		/* Say that we haven't! */
+		gdb_client_tx_queue( cli, TRUE, (uint8_t*)"T00", 3 );
+		break;
+
+	case 'g':
+		/* gdb wants to know the contents of our registers */
+
+		gdb_client_tx_queue( cli, TRUE, (uint8_t*)"0000000000000000000000000000000000000000000000000000000000000000", 32 );
+		
+		break;
+
+	default:
+		/* We don't support that command */
+		gdb_client_tx_queue( cli, TRUE, (uint8_t*)"", 0 );
+	}
+
+free_frame:
+	if( frame->data != NULL )
+		g_free( frame->data );
+	g_free( frame );
+	g_queue_pop_head( cli->in_q );
 }
