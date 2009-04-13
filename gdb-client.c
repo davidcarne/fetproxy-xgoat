@@ -133,7 +133,6 @@ static gboolean gdb_client_incoming( GIOChannel *source,
 	GError *err = NULL;
 	GIOStatus stat;
 	GdbClient *cli = (GdbClient*)_cli;
-	g_debug( "incoming" );
 
 	do
 	{
