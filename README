@@ -1,0 +1,17 @@
+fetproxy is a tool for connecting gdb to an MSP430 debugger.
+
+Current status: fetproxy is still under development, and currently is
+not capable of debugging any devices.
+
+In the future, fetproxy should be able to:
+ - Program and debug all msp430 devices, including the 5xx range
+ - Use the advanced debugging features exposed by the EEM 
+ - Use the mailbox peripheral in the 5xx range
+
+A timeframe for the completion of this work is not available.  Work is
+done on fetproxy in an unscheduled manner in the spare time of the
+authors.
+
+If you would like to get in contact with the authors, e.g. to submit a
+patch, then send an email to Rob Spanton <rspanton@zepler.net>.  A
+mailing list may develop soon.
