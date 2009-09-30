@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include "gdb-client.h"
 #include <ctype.h>
 #include <stdio.h>

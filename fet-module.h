@@ -18,7 +18,6 @@
 
 #ifndef __FET_MODULE_H
 #define __FET_MODULE_H
-#define _GNU_SOURCE		/* For TEMP_FAILURE_RETRY */
 #include <stdio.h>
 #include <sys/time.h>
 #include <stdint.h>

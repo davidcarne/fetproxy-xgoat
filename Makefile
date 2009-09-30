@@ -1,4 +1,4 @@
-CFLAGS := -Wall -g
+CFLAGS := -Wall -g -D_GNU_SOURCE
 
 CFLAGS += `pkg-config --cflags glib-2.0`
 LDFLAGS += `pkg-config --libs glib-2.0`
