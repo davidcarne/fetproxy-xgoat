@@ -41,7 +41,7 @@ gboolean fet_module_proc_incoming( GIOChannel *source, GIOCondition condition,
  * When a full frame is achieved, it returns 0.
  * When a full frame has not been acheived, it returns 1.
  * When an error occurs, it returns -1 */
-static int fet_module_read_frame( FetModule* xb  );
+static int fet_module_read_frame( FetModule* fet  );
 
 /* Displays the contents of a frame */
 static void debug_show_frame( uint8_t* buf, uint16_t len );
@@ -56,31 +56,31 @@ static gboolean fet_module_proc_outgoing( GIOChannel *source, GIOCondition condi
 
 /* Escape the byte pointed to by d.  Put the result in d.
  * Returns TRUE if it's OK to move on to the next byte. */
-static gboolean fet_module_outgoing_escape_byte( FetModule* xb, uint8_t *d );
+static gboolean fet_module_outgoing_escape_byte( FetModule* fet, uint8_t *d );
 
 /* Whether data's ready to transmit */
-static gboolean fet_module_outgoing_queued( FetModule* xb );
+static gboolean fet_module_outgoing_queued( FetModule* fet );
 
 /* Returns the next byte to transmit */
-static uint8_t fet_module_outgoing_next( FetModule* xb );
+static uint8_t fet_module_outgoing_next( FetModule* fet );
 
 /* Adds the frame directly to the queue (memory allocation must have
  * already been done) */
-static void fet_module_out_queue_add_frame( FetModule* xb, fet_frame_t* frame );
+static void fet_module_out_queue_add_frame( FetModule* fet, fet_frame_t* frame );
 
 /* Removes the last frame from the transmit queue */
-static void fet_module_out_queue_del( FetModule* xb );
+static void fet_module_out_queue_del( FetModule* fet );
 
 /*** "Internal" Client API Functions ***/
 
 /* Configure the serial port */
 
-void fet_instance_init( GTypeInstance *xb, gpointer g_class );
+void fet_instance_init( GTypeInstance *fet, gpointer g_class );
 
 /* Free information related to a module. */
-void fet_free( FetModule* xb );
+void fet_free( FetModule* fet );
 
-static void fet_module_print_stats( FetModule* xb );
+static void fet_module_print_stats( FetModule* fet );
 
 static uint8_t fet_module_outgoing_next( FetModule* fet )
 {
@@ -201,12 +201,12 @@ static void fet_module_out_queue_add_frame( FetModule* fet, fet_frame_t* frame )
 	}
 }
 
-static void fet_module_out_queue_del( FetModule* xb )
+static void fet_module_out_queue_del( FetModule* fet )
 {
 	fet_frame_t *frame;
-	assert( xb != NULL );
+	assert( fet != NULL );
 
-	frame = (fet_frame_t*)g_queue_peek_tail( xb->out_frames );
+	frame = (fet_frame_t*)g_queue_peek_tail( fet->out_frames );
 
 	/* Free the data */
 	g_free( frame->data );
@@ -215,13 +215,13 @@ static void fet_module_out_queue_del( FetModule* xb )
 	/* Free the element */
 	g_free( frame );
 
-	g_queue_pop_tail( xb->out_frames );
+	g_queue_pop_tail( fet->out_frames );
 }
 
-int fet_module_transmit( FetModule* xb, const void* buf, uint8_t len )
+int fet_module_transmit( FetModule* fet, const void* buf, uint8_t len )
 {
 	fet_frame_t *frame;
-	assert( xb != NULL && buf != NULL );
+	assert( fet != NULL && buf != NULL );
 
 	printf("Out: ");
 	debug_show_data( buf, len );
@@ -236,37 +236,37 @@ int fet_module_transmit( FetModule* xb, const void* buf, uint8_t len )
 
 	frame->len = len;
 
-	fet_module_out_queue_add_frame( xb, frame );
+	fet_module_out_queue_add_frame( fet, frame );
 
 	return 0;
 }
 
-static void fet_module_print_stats( FetModule* xb )
+static void fet_module_print_stats( FetModule* fet )
 {
-	assert( xb != NULL );
+	assert( fet != NULL );
 	return;
 
 	printf( "\rFrames: %6lu IN, %6lu OUT. Bytes: %9lu IN, %9lu OUT",
-		(long unsigned int)xb->frames_rx, 
-		(long unsigned int)xb->frames_tx, 
-		(long unsigned int)xb->bytes_rx, 
-		(long unsigned int)xb->bytes_tx );
+		(long unsigned int)fet->frames_rx, 
+		(long unsigned int)fet->frames_tx, 
+		(long unsigned int)fet->bytes_rx, 
+		(long unsigned int)fet->bytes_tx );
 }
 
-void fet_free( FetModule* xb )
+void fet_free( FetModule* fet )
 {
-	assert( xb != NULL );
+	assert( fet != NULL );
 
-	while( g_queue_get_length( xb->out_frames ) > 0 )
+	while( g_queue_get_length( fet->out_frames ) > 0 )
 	{
-		fet_frame_t *f = (fet_frame_t*)g_queue_peek_tail(xb->out_frames);
+		fet_frame_t *f = (fet_frame_t*)g_queue_peek_tail(fet->out_frames);
 		g_free( f->data );
 		g_free( f );
-		g_queue_pop_tail( xb->out_frames );
+		g_queue_pop_tail( fet->out_frames );
 	}
 
-	g_queue_free( xb->out_frames );
-	xb->out_frames = NULL;
+	g_queue_free( fet->out_frames );
+	fet->out_frames = NULL;
 }
 
 FetModule* fet_module_open( char* fname, GMainContext *context )

@@ -113,7 +113,7 @@ void config_create( int argc, char **argv )
 	GError *error = NULL;
 	
 	opt_context = g_option_context_new( "" );  
-	g_option_context_set_summary( opt_context, "xbee server" );
+	g_option_context_set_summary( opt_context, "FET server" );
 	g_option_context_add_main_entries(opt_context, entries, NULL);
 
 	if(!g_option_context_parse( opt_context, &argc, &argv, &error ))
@@ -123,7 +123,7 @@ void config_create( int argc, char **argv )
 	}
 
 	if( sdev == NULL )
-		g_print( "Warning: No serial port specified = no xbee!\n" );
+		g_print( "Warning: No serial port specified = no FET!\n" );
 }
 
 void send_elf( FetModule *fet, char* fname )

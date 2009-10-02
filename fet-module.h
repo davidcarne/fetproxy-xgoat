@@ -71,7 +71,7 @@ struct fet_ts
 	GIOChannel *ioc;
 
 	/*** Transmission ***/
-	/* Queue of outgoing frames - all of xb_frame_t */
+	/* Queue of outgoing frames - all of fet_frame_t */
 	/* Note: the data in these frames has already been escaped */
 	GQueue* out_frames; 
 
@@ -103,16 +103,15 @@ struct fet_ts
 	gpointer gdbclient_userdata;
 };
 
-/* Create a connection to an xbee.
- * Opens the serial port given in fname, and fills the 
- * structure *xb with stuff. */
+/* Create a connection to a FET.
+ * Opens the serial port given in fname */
 FetModule* fet_module_open( char *fname, GMainContext *context );
 
-/* Close an xbee connection */
-void fet_module_close( FetModule *xb );
+/* Close a FET connection */
+void fet_module_close( FetModule *fet );
 
-/* Add an xbee to a mainloop */
-void fet_module_add_source( FetModule *xb, GMainContext *context );
+/* Add a FET to a mainloop */
+void fet_module_add_source( FetModule *fet, GMainContext *context );
 
 /* Transmit a frame */
 int fet_module_transmit( FetModule* fet, const void* buf, uint8_t len );
